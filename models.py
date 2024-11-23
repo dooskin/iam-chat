@@ -19,9 +19,17 @@ class Resource(db.Model):
     name = db.Column(db.String(128), nullable=False)
     description = db.Column(db.Text)
     type = db.Column(db.String(64), nullable=False)
+    
+    __table_args__ = (
+        db.UniqueConstraint('name', name='uq_resource_name'),
+    )
 
 class Permission(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     role = db.Column(db.String(64), nullable=False)
     resource_id = db.Column(db.Integer, db.ForeignKey('resource.id'), nullable=False)
     action = db.Column(db.String(64), nullable=False)  # read, write, execute, etc.
+    
+    __table_args__ = (
+        db.UniqueConstraint('role', 'resource_id', 'action', name='uq_permission_role_resource_action'),
+    )

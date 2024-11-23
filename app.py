@@ -14,8 +14,6 @@ from policy_engine import evaluate_access_request
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-login_manager = LoginManager()
-
 app = Flask(__name__)
 
 # Initialize Flask app config
@@ -28,7 +26,7 @@ db.init_app(app)
 
 # Configure login manager
 login_manager = LoginManager(app)
-login_manager.login_view = 'login'
+login_manager.login_view = 'login'  # type: ignore
 login_manager.login_message = 'Please log in to access this page.'
 login_manager.login_message_category = 'info'
 
@@ -107,9 +105,14 @@ def logout():
 @app.route('/api/chat', methods=['POST'])
 @login_required
 def chat():
-    message = request.json.get('message')
-    if not message:
+    if not request.is_json:
+        return jsonify({'error': 'Content-Type must be application/json'}), 400
+        
+    data = request.get_json()
+    if not data or 'message' not in data:
         return jsonify({'error': 'No message provided'}), 400
+        
+    message = data['message']
 
     try:
         # Process message through chatbot
