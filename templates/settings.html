@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h2>Settings</h2>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <h5 class="card-title">Account Settings</h5>
+                <form method="POST" action="{{ url_for('update_settings') }}" class="mb-4">
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email Address</label>
+                        <input type="email" class="form-control" id="email" name="email" value="{{ current_user.email }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="current_password" class="form-label">Current Password</label>
+                        <input type="password" class="form-control" id="current_password" name="current_password">
+                    </div>
+                    <div class="mb-3">
+                        <label for="new_password" class="form-label">New Password</label>
+                        <input type="password" class="form-control" id="new_password" name="new_password">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Update Settings</button>
+                </form>
+            </div>
+            
+            <div class="col-md-6">
+                <h5 class="card-title">Interface Preferences</h5>
+                <div class="mb-3">
+                    <label class="form-label d-block">Chat Message Display</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="showTimestamp" checked>
+                        <label class="form-check-label" for="showTimestamp">
+                            Show message timestamps
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

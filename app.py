@@ -184,6 +184,43 @@ def update_user_role(user_id):
         logger.error(f'Error updating user role: {str(e)}')
         
     return redirect(url_for('users'))
+@app.route('/integrations')
+@login_required
+def integrations():
+    return render_template('integrations.html')
+
+@app.route('/settings', methods=['GET', 'POST'])
+@login_required
+def settings():
+    return render_template('settings.html')
+
+@app.route('/settings/update', methods=['POST'])
+@login_required
+def update_settings():
+    try:
+        email = request.form.get('email')
+        current_password = request.form.get('current_password')
+        new_password = request.form.get('new_password')
+
+        if email and email != current_user.email:
+            current_user.email = email
+            flash('Email updated successfully', 'success')
+
+        if current_password and new_password:
+            if check_password_hash(current_user.password_hash, current_password):
+                current_user.password_hash = generate_password_hash(new_password)
+                flash('Password updated successfully', 'success')
+            else:
+                flash('Current password is incorrect', 'danger')
+
+        db.session.commit()
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        flash('Error updating settings', 'danger')
+        logger.error(f'Error updating settings: {str(e)}')
+
+    return redirect(url_for('settings'))
+
 @app.route('/api/chat', methods=['POST'])
 @login_required
 def chat():

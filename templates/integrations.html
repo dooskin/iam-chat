@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h2>Google Cloud Integration</h2>
+    </div>
+    <div class="card-body">
+        <h5 class="card-title">Connect to Google Cloud Console</h5>
+        <p class="card-text">Follow these steps to integrate with Google Cloud:</p>
+        
+        <ol class="list-group list-group-numbered mb-4">
+            <li class="list-group-item">Go to the <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer">Google Cloud Console</a></li>
+            <li class="list-group-item">Create a new project or select an existing one</li>
+            <li class="list-group-item">Enable the necessary APIs for your integration:
+                <ul>
+                    <li>Cloud Identity and Access Management (IAM) API</li>
+                    <li>Admin SDK API</li>
+                </ul>
+            </li>
+            <li class="list-group-item">Create a service account:
+                <ul>
+                    <li>Navigate to IAM & Admin > Service Accounts</li>
+                    <li>Click "Create Service Account"</li>
+                    <li>Grant necessary permissions (roles) to the service account</li>
+                    <li>Create and download the JSON key file</li>
+                </ul>
+            </li>
+            <li class="list-group-item">Configure your security settings and access controls in the Google Cloud Console</li>
+        </ol>
+
+        <div class="alert alert-info">
+            <h6 class="alert-heading">Security Best Practices:</h6>
+            <ul class="mb-0">
+                <li>Always follow the principle of least privilege when assigning roles</li>
+                <li>Regularly rotate service account keys</li>
+                <li>Monitor service account usage through Cloud Audit Logs</li>
+                <li>Store credentials securely and never commit them to version control</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}
