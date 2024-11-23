@@ -1,12 +1,18 @@
 import os
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+import logging
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
+from sqlalchemy.exc import SQLAlchemyError
 from chatbot import process_chat_message
 from database import db
 from models import User
 from policy_engine import evaluate_access_request
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 login_manager = LoginManager()
 
@@ -37,12 +43,24 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        user = User.query.filter_by(username=username).first()
-        if user and check_password_hash(user.password_hash, password):
-            login_user(user)
-            return redirect(url_for('index'))
+        if not username or not password:
+            logger.warning('Login attempt with missing credentials')
+            return render_template('login.html', error='Username and password are required')
         
-        return render_template('login.html', error='Invalid username or password')
+        try:
+            user = User.query.filter_by(username=username).first()
+            if user and check_password_hash(user.password_hash, password):
+                login_user(user)
+                logger.info(f'Successful login for user: {username}')
+                return redirect(url_for('index'))
+            
+            logger.warning(f'Failed login attempt for username: {username}')
+            return render_template('login.html', error='Invalid username or password')
+            
+        except SQLAlchemyError as e:
+            logger.error(f'Database error during login: {str(e)}')
+            db.session.rollback()
+            return render_template('login.html', error='An error occurred. Please try again.')
     
     return render_template('login.html')
 
@@ -77,16 +95,37 @@ def chat():
         return jsonify({'error': str(e)}), 500
 
 with app.app_context():
-    db.create_all()
-    
-    # Create test user if it doesn't exist
-    test_user = User.query.filter_by(username='testuser').first()
-    if not test_user:
-        test_user = User(
-            username='testuser',
-            email='test@example.com',
-            password_hash=generate_password_hash('testpass123'),
-            role='user'
-        )
-        db.session.add(test_user)
-        db.session.commit()
+    try:
+        # Verify database connection
+        db.engine.connect()
+        logger.info("Database connection successful")
+        
+        db.create_all()
+        logger.info("Database tables created successfully")
+        
+        # Create test user if it doesn't exist
+        test_user = User.query.filter_by(username='testuser').first()
+        if not test_user:
+            print("Creating test user...")  # Temporary print statement
+            test_user = User(
+                username='testuser',
+                email='test@example.com',
+                password_hash=generate_password_hash('testpass123'),
+                role='user'
+            )
+            try:
+                db.session.add(test_user)
+                db.session.commit()
+                print("Test user created successfully")  # Temporary print statement
+                logger.info("Test user created successfully")
+            except SQLAlchemyError as e:
+                db.session.rollback()
+                logger.error(f"Error creating test user: {str(e)}")
+                print(f"Error creating test user: {str(e)}")  # Temporary print statement
+        else:
+            print("Test user already exists")  # Temporary print statement
+            logger.info("Test user already exists")
+            
+    except SQLAlchemyError as e:
+        logger.error(f"Database initialization error: {str(e)}")
+        raise

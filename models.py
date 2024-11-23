@@ -7,6 +7,12 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
     role = db.Column(db.String(64), nullable=False, default='user')
+    
+    def __init__(self, username, email, password_hash, role='user'):
+        self.username = username
+        self.email = email
+        self.password_hash = password_hash
+        self.role = role
 
 class Resource(db.Model):
     id = db.Column(db.Integer, primary_key=True)
