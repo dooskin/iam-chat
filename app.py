@@ -2,7 +2,7 @@ import os
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from chatbot import process_chat_message
 from database import db
 from models import User
@@ -78,3 +78,15 @@ def chat():
 
 with app.app_context():
     db.create_all()
+    
+    # Create test user if it doesn't exist
+    test_user = User.query.filter_by(username='testuser').first()
+    if not test_user:
+        test_user = User(
+            username='testuser',
+            email='test@example.com',
+            password_hash=generate_password_hash('testpass123'),
+            role='user'
+        )
+        db.session.add(test_user)
+        db.session.commit()
