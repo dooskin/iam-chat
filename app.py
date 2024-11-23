@@ -23,22 +23,46 @@ app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'your-secret-key')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Initialize extensions
+# Initialize database
 db.init_app(app)
-login_manager.init_app(app)
+
+# Configure login manager
+login_manager = LoginManager(app)
 login_manager.login_view = 'login'
+login_manager.login_message = 'Please log in to access this page.'
+login_manager.login_message_category = 'info'
+
+@login_manager.unauthorized_handler
+def unauthorized():
+    logger.warning(f'Unauthorized access attempt to {request.url}')
+    flash('You must be logged in to view this page.', 'warning')
+    return redirect(url_for('login', next=request.url))
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    try:
+        return User.query.get(int(user_id))
+    except Exception as e:
+        logger.error(f'Error loading user {user_id}: {str(e)}')
+        return None
 
 @app.route('/')
 @login_required
 def index():
+    logger.info(f'User {current_user.username} accessed the chat interface')
     return render_template('chat.html')
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if current_user.is_authenticated:
+        logger.debug('Already authenticated user accessing login page')
+        return redirect(url_for('index'))
+
+    next_page = request.args.get('next')
+    if next_page and not next_page.startswith('/'):
+        logger.warning(f'Invalid next parameter detected: {next_page}')
+        next_page = None
+
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
@@ -50,9 +74,19 @@ def login():
         try:
             user = User.query.filter_by(username=username).first()
             if user and check_password_hash(user.password_hash, password):
-                login_user(user)
+                # Set remember=True for persistent sessions
+                login_user(user, remember=True)
+                
+                # Set additional session data if needed
+                session['user_role'] = user.role
+                session.permanent = True
+                
                 logger.info(f'Successful login for user: {username}')
-                return redirect(url_for('index'))
+                
+                # Redirect to next page or index
+                target = next_page if next_page else url_for('index')
+                logger.debug(f'Redirecting user {username} to: {target}')
+                return redirect(target)
             
             logger.warning(f'Failed login attempt for username: {username}')
             return render_template('login.html', error='Invalid username or password')
