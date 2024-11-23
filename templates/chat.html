@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="chat-messages" id="chatMessages">
+        <div class="message system">
+            Welcome to the Enterprise Access Management Bot. How can I help you today?
+        </div>
+    </div>
+    <div class="chat-input-container">
+        <form id="chatForm" class="d-flex">
+            <input type="text" id="messageInput" class="form-control me-2" 
+                   placeholder="Type your message here..." required>
+            <button type="submit" class="btn btn-primary">Send</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/chat.js"></script>
+{% endblock %}
