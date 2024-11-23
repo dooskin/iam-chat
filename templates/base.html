@@ -28,7 +28,8 @@
         </div>
     </nav>
 
-    <div class="wrapper">
+    <div class="wrapper {% if not current_user.is_authenticated %}no-sidebar{% endif %}">
+        {% if current_user.is_authenticated %}
         <!-- Sidebar -->
         <nav id="sidebar" class="sidebar">
             <div class="sidebar-header">
@@ -56,12 +57,15 @@
             </ul>
         </nav>
 
+        <!-- Sidebar Toggle Button -->
+        <button type="button" id="sidebarCollapse" class="btn btn-dark">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        {% endif %}
+
         <!-- Page Content -->
-        <div id="content" class="content">
-            <button type="button" id="sidebarCollapse" class="btn btn-dark">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="container mt-4">
+        <div id="content" class="content {% if not current_user.is_authenticated %}no-sidebar{% endif %}">
+            <div class="container mt-4 {% if current_user.is_authenticated %}with-sidebar{% endif %}">
                 {% block content %}{% endblock %}
             </div>
         </div>

@@ -67,6 +67,11 @@
     display: flex;
     width: 100%;
     min-height: calc(100vh - 56px - 80px);
+    position: relative;
+}
+
+.wrapper.no-sidebar {
+    display: block;
 }
 
 .sidebar {
@@ -116,7 +121,7 @@
 
 #content {
     width: calc(100% - 250px);
-    min-height: 100vh;
+    min-height: calc(100vh - 56px - 80px);
     transition: all 0.3s;
     position: absolute;
     top: 56px;
@@ -125,6 +130,16 @@
 
 #content.active {
     width: 100%;
+}
+
+#content.no-sidebar {
+    width: 100%;
+    position: relative;
+    top: 0;
+}
+
+.container.mt-4.with-sidebar {
+    margin-bottom: 120px;
 }
 
 #sidebarCollapse {
