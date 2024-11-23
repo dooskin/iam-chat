@@ -11,4 +11,6 @@ dependencies = [
     "flask-wtf>=1.2.2",
     "openai>=1.55.0",
     "psycopg2-binary>=2.9.10",
+    "werkzeug",
+    "sqlalchemy",
 ]

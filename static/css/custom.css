@@ -61,3 +61,22 @@
     margin: 0 auto;
     text-align: center;
 }
+
+/* Footer styles */
+.footer {
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    background-color: var(--bs-dark) !important;
+    border-top: 1px solid var(--bs-secondary);
+}
+
+/* Adjust main content for fixed footer */
+.container.mt-4 {
+    margin-bottom: 120px;
+}
+
+/* Logo and brand styling */
+.navbar-brand svg {
+    vertical-align: middle;
+}
