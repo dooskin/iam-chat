@@ -103,28 +103,28 @@ with app.app_context():
         db.create_all()
         logger.info("Database tables created successfully")
         
-        # Create test user if it doesn't exist
-        test_user = User.query.filter_by(username='testuser').first()
-        if not test_user:
-            print("Creating test user...")  # Temporary print statement
-            test_user = User(
-                username='testuser',
-                email='test@example.com',
-                password_hash=generate_password_hash('testpass123'),
-                role='user'
+        # Create admin user if it doesn't exist
+        admin_user = User.query.filter_by(username='admin69!').first()
+        if not admin_user:
+            print("Creating admin user...")  # Temporary print statement
+            admin_user = User(
+                username='admin69!',
+                email='admin@example.com',
+                password_hash=generate_password_hash('admin69!'),
+                role='admin'
             )
             try:
-                db.session.add(test_user)
+                db.session.add(admin_user)
                 db.session.commit()
-                print("Test user created successfully")  # Temporary print statement
-                logger.info("Test user created successfully")
+                print("Admin user created successfully")  # Temporary print statement
+                logger.info("Admin user created successfully")
             except SQLAlchemyError as e:
                 db.session.rollback()
-                logger.error(f"Error creating test user: {str(e)}")
-                print(f"Error creating test user: {str(e)}")  # Temporary print statement
+                logger.error(f"Error creating admin user: {str(e)}")
+                print(f"Error creating admin user: {str(e)}")  # Temporary print statement
         else:
-            print("Test user already exists")  # Temporary print statement
-            logger.info("Test user already exists")
+            print("Admin user already exists")  # Temporary print statement
+            logger.info("Admin user already exists")
             
     except SQLAlchemyError as e:
         logger.error(f"Database initialization error: {str(e)}")
