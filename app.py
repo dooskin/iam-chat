@@ -1,6 +1,7 @@
 import os
 import logging
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash
+from functools import wraps
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -102,6 +103,87 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or current_user.role != 'admin':
+            flash('You do not have permission to access this page.', 'danger')
+            return redirect(url_for('index'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/users')
+@login_required
+@admin_required
+def users():
+    users_list = User.query.all()
+    return render_template('users.html', users=users_list)
+
+@app.route('/users/add', methods=['POST'])
+@login_required
+@admin_required
+def add_user():
+    username = request.form.get('username')
+    email = request.form.get('email')
+    password = request.form.get('password')
+    role = request.form.get('role')
+
+    if not all([username, email, password, role]):
+        flash('All fields are required', 'danger')
+        return redirect(url_for('users'))
+
+    if role not in ['user', 'admin']:
+        flash('Invalid role specified', 'danger')
+        return redirect(url_for('users'))
+
+    try:
+        existing_user = User.query.filter(
+            db.or_(User.username == username, User.email == email)
+        ).first()
+        
+        if existing_user:
+            flash('Username or email already exists', 'danger')
+            return redirect(url_for('users'))
+
+        new_user = User(
+            username=username,
+            email=email,
+            password_hash=generate_password_hash(password),
+            role=role
+        )
+        
+        db.session.add(new_user)
+        db.session.commit()
+        flash('User added successfully', 'success')
+        
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        flash('Error adding user', 'danger')
+        logger.error(f'Error adding user: {str(e)}')
+        
+    return redirect(url_for('users'))
+
+@app.route('/users/<int:user_id>/role', methods=['POST'])
+@login_required
+@admin_required
+def update_user_role(user_id):
+    user = User.query.get_or_404(user_id)
+    new_role = request.form.get('role')
+    
+    if new_role not in ['user', 'admin']:
+        flash('Invalid role specified', 'danger')
+        return redirect(url_for('users'))
+        
+    try:
+        user.role = new_role
+        db.session.commit()
+        flash('User role updated successfully', 'success')
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        flash('Error updating user role', 'danger')
+        logger.error(f'Error updating user role: {str(e)}')
+        
+    return redirect(url_for('users'))
 @app.route('/api/chat', methods=['POST'])
 @login_required
 def chat():
