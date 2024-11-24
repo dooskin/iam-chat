@@ -51,22 +51,16 @@ def index():
     logger.info(f'User {current_user.username} accessed the chat interface')
     return render_template('chat.html')
 
-def get_greeting():
-    """Return a time-based greeting"""
-    from datetime import datetime
-    hour = datetime.now().hour
-    if hour < 12:
-        return "Good morning"
-    elif hour < 18:
-        return "Good afternoon"
-    else:
-        return "Good evening"
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
         logger.debug('Already authenticated user accessing login page')
         return redirect(url_for('index'))
+
+    next_page = request.args.get('next')
+    if next_page and not next_page.startswith('/'):
+        logger.warning(f'Invalid next parameter detected: {next_page}')
+        next_page = None
 
     if request.method == 'POST':
         username = request.form.get('username')
@@ -79,11 +73,19 @@ def login():
         try:
             user = User.query.filter_by(username=username).first()
             if user and check_password_hash(user.password_hash, password):
+                # Set remember=True for persistent sessions
                 login_user(user, remember=True)
+                
+                # Set additional session data if needed
                 session['user_role'] = user.role
                 session.permanent = True
+                
                 logger.info(f'Successful login for user: {username}')
-                return redirect(url_for('index'))
+                
+                # Redirect to next page or index
+                target = next_page if next_page else url_for('index')
+                logger.debug(f'Redirecting user {username} to: {target}')
+                return redirect(target)
             
             logger.warning(f'Failed login attempt for username: {username}')
             return render_template('login.html', error='Invalid username or password')
