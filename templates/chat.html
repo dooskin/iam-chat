@@ -4,7 +4,11 @@
 <div class="chat-container">
     <div class="chat-messages" id="chatMessages">
         <div class="message system">
+            {% if current_user.is_authenticated %}
+            Welcome back, {{ current_user.username }}! I'm here to help you manage your enterprise access needs. Your current role is {{ current_user.role }}.
+            {% else %}
             Welcome to the Enterprise Access Management Bot. How can I help you today?
+            {% endif %}
         </div>
     </div>
     <div class="chat-input-container">

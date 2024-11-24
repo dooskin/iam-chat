@@ -196,3 +196,34 @@
 .navbar-brand svg {
     vertical-align: middle;
 }
+/* Message styling */
+.message {
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    border-radius: 0.25rem;
+}
+
+.message.system {
+    background-color: var(--bs-dark);
+    border: 1px solid var(--bs-primary);
+    color: var(--bs-light);
+}
+
+.message.user {
+    background-color: var(--bs-primary);
+    color: var(--bs-light);
+    margin-left: auto;
+    max-width: 80%;
+}
+
+.message.bot {
+    background-color: var(--bs-secondary);
+    color: var(--bs-light);
+    margin-right: auto;
+    max-width: 80%;
+}
+
+.message.error {
+    background-color: var(--bs-danger);
+    color: var(--bs-light);
+}
