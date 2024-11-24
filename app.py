@@ -51,6 +51,17 @@ def index():
     logger.info(f'User {current_user.username} accessed the chat interface')
     return render_template('chat.html')
 
+def get_greeting():
+    """Return a time-based greeting"""
+    from datetime import datetime
+    hour = datetime.now().hour
+    if hour < 12:
+        return "Good morning"
+    elif hour < 18:
+        return "Good afternoon"
+    else:
+        return "Good evening"
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
