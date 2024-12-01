@@ -19,5 +19,4 @@ dependencies = [
     "spacy>=3.8.2",
     "pytesseract>=0.3.13",
     "python-magic>=0.4.27",
-    "flask-migrate>=4.0.7",
 ]

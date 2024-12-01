@@ -274,7 +274,47 @@
 
 <!-- Update JavaScript -->
 <script>
-// Removed duplicate viewDocument function - using enhanced version below
+function viewDocument(docId) {
+    fetch(`/compliance/document/${docId}/rules`)
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('rulesContainer');
+            container.innerHTML = '';
+            
+            data.rules.forEach(rule => {
+                const ruleElement = document.createElement('div');
+                ruleElement.className = 'card mb-3';
+                ruleElement.innerHTML = `
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">${rule.type}</h6>
+                        <span class="badge bg-primary">Priority: ${rule.priority}</span>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>Description:</strong> ${rule.description}</p>
+                        <p><strong>Conditions:</strong></p>
+                        <ul>
+                            <li>Subject: ${rule.conditions.subject}</li>
+                            <li>Timing: ${rule.conditions.timing}</li>
+                            ${rule.conditions.prerequisites ? `<li>Prerequisites: ${rule.conditions.prerequisites}</li>` : ''}
+                        </ul>
+                        <p><strong>Required Actions:</strong></p>
+                        <ul>
+                            ${rule.actions.required_steps.map(step => `<li>${step}</li>`).join('')}
+                        </ul>
+                        <p><strong>Verification:</strong> ${rule.actions.verification}</p>
+                    </div>
+                `;
+                container.appendChild(ruleElement);
+            });
+            
+            const modal = new bootstrap.Modal(document.getElementById('viewRulesModal'));
+            modal.show();
+        })
+        .catch(error => {
+            console.error('Error fetching rules:', error);
+            alert('Error loading rules. Please try again.');
+        });
+}
 </script>
 {% block scripts %}
 <script>
