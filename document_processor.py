@@ -242,16 +242,21 @@ def create_policy_from_rules(rules: List[Dict], document_id: int) -> Optional[Di
         logger.error(f"Error creating policy from rules: {str(e)}")
         return None
 
-def process_document(document: ComplianceDocument, file_path: str, max_retries: int = 3) -> None:
+def process_document(document_id: int, file_path: str, max_retries: int = 3) -> None:
     """Process a document and extract compliance rules with enhanced error handling and retries."""
     session = db.session()
     
-    def update_status(new_status: str, commit: bool = True) -> None:
+    def get_document():
+        """Helper function to get document within the current session context."""
+        return session.query(ComplianceDocument).get(document_id)
+    
+    def update_status(document: ComplianceDocument, new_status: str, commit: bool = True) -> None:
         """Helper function to update document status with proper error handling."""
         try:
             document.status = new_status
             if commit:
                 session.commit()
+                session.refresh(document)
             logger.info(f"Document {document.filename} status updated to: {new_status}")
         except Exception as e:
             session.rollback()
@@ -259,34 +264,40 @@ def process_document(document: ComplianceDocument, file_path: str, max_retries: 
             raise
     
     try:
-        update_status('processing')
+        document = get_document()
+        if not document:
+            raise ValueError(f"Document with ID {document_id} not found")
+
+        update_status(document, 'processing')
         logger.info(f"Started processing document: {document.filename}")
         
         # Step 1: Extract text from PDF (25%)
         logger.info("Extracting text from PDF...")
         text = extract_pdf_text(file_path)
         document.content = text
-        update_status('processing_25')
+        update_status(document, 'processing_25')
         
         # Step 2: Process text and extract rules (50%)
         logger.info("Processing text and extracting rules...")
         processed_data = process_document_text(text)
         document.processed_content = text
-        update_status('processing_50')
+        update_status(document, 'processing_50')
         
         # Step 3: Validate extracted rules (75%)
         logger.info("Validating extracted rules...")
         valid_rules = [rule for rule in processed_data['rules'] if validate_rule(rule)]
         logger.info(f"Found {len(valid_rules)} valid rules out of {len(processed_data['rules'])} total rules")
-        update_status('processing_75')
+        update_status(document, 'processing_75')
         
         # Step 4: Create compliance rules and policy (100%)
         logger.info("Creating compliance rules and policy...")
         
         # Use transaction for rules creation
         try:
+            session.refresh(document)  # Ensure document is fresh in session
             create_compliance_rules(document, valid_rules)
             session.flush()  # Ensure rules are created before policy
+            session.refresh(document)  # Refresh after rules creation
         except Exception as e:
             session.rollback()
             logger.error(f"Error creating compliance rules: {str(e)}")
@@ -340,18 +351,22 @@ def process_document(document: ComplianceDocument, file_path: str, max_retries: 
         
         if not policy_created:
             logger.error(f"Failed to create policy after {max_retries} attempts. Last error: {str(last_error)}")
-            update_status('partial_success', commit=False)
+            update_status(document, 'partial_success', commit=False)
         else:
-            update_status('processed', commit=False)
+            update_status(document, 'processed', commit=False)
         
         # Final commit for the entire transaction
         session.commit()
+        session.refresh(document)  # Final refresh after all operations
         logger.info(f"Successfully processed document: {document.filename}")
         
     except Exception as e:
         session.rollback()
-        update_status('error')
-        logger.error(f"Error processing document {document.filename}: {str(e)}")
+        # Get fresh document instance for error status update
+        error_doc = get_document()
+        if error_doc:
+            update_status(error_doc, 'error')
+        logger.error(f"Error processing document {document_id}: {str(e)}")
         raise
         
     finally:

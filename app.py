@@ -289,8 +289,8 @@ def upload_compliance_document():
         logger.info(f"Created document record for {filename}")
         
         try:
-            # Process the document
-            process_document(document, file_path)
+            # Process the document using document_id
+            process_document(document.id, file_path)
             
             # Check final status
             db.session.refresh(document)
