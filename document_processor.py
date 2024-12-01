@@ -2,6 +2,9 @@ import os
 import json
 import logging
 from typing import Dict, List, Optional
+from datetime import datetime
+import time
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.utils import secure_filename
 from pdfminer.high_level import extract_text
 from openai import OpenAI
@@ -156,8 +159,8 @@ def create_compliance_rules(document: ComplianceDocument, rules: List[Dict]) -> 
         logger.error(f"Error creating compliance rules: {str(e)}")
         raise
 
-def create_policy_from_rules(rules: List[Dict]) -> Optional[Dict]:
-    """Convert extracted rules into a compliance policy."""
+def create_policy_from_rules(rules: List[Dict], document_id: int) -> Optional[Dict]:
+    """Convert extracted rules into a compliance policy with unique naming."""
     try:
         if not rules:
             return None
@@ -166,21 +169,35 @@ def create_policy_from_rules(rules: List[Dict]) -> Optional[Dict]:
         high_priority_rules = [r for r in rules if r['priority'] >= 4]
         other_rules = [r for r in rules if r['priority'] < 4]
         
-        # Determine policy category based on rule content
+        # Enhanced category detection with keyword mapping
+        category_keywords = {
+            'GDPR': ['gdpr', 'data protection', 'privacy', 'eu regulation'],
+            'SOX': ['sox', 'sarbanes', 'financial control', 'audit'],
+            'HIPAA': ['hipaa', 'health', 'medical', 'patient'],
+            'PCI': ['pci', 'payment', 'card data', 'credit card'],
+            'ISO27001': ['iso 27001', 'information security', 'isms'],
+        }
+        
+        # Determine categories based on enhanced keyword matching
         categories = set()
-        for rule in rules:
-            if 'gdpr' in rule['description'].lower():
-                categories.add('GDPR')
-            if 'sox' in rule['description'].lower():
-                categories.add('SOX')
-            if 'hipaa' in rule['description'].lower():
-                categories.add('HIPAA')
+        combined_text = ' '.join(rule['description'].lower() for rule in rules)
         
-        category = next(iter(categories)) if categories else 'General'
+        for category, keywords in category_keywords.items():
+            if any(keyword in combined_text for keyword in keywords):
+                categories.add(category)
         
-        # Create policy name and description
-        name = f"Auto-generated Policy - {category}"
-        description = "Automatically generated from document analysis\n\n"
+        primary_category = next(iter(categories)) if categories else 'General'
+        
+        # Generate unique policy name with timestamp and document ID
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        name = f"Policy_{primary_category}_{document_id}_{timestamp}"
+        
+        description = f"Auto-generated compliance policy for document {document_id}\n"
+        description += f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        
+        # Add detected categories
+        if categories:
+            description += "Compliance Categories: " + ", ".join(categories) + "\n\n"
         
         # Add high priority rules first
         if high_priority_rules:
@@ -194,80 +211,148 @@ def create_policy_from_rules(rules: List[Dict]) -> Optional[Dict]:
             for rule in other_rules:
                 description += f"- {rule['description']}\n"
         
-        # Create requirements section
+        # Enhanced requirements section with better structure
         requirements = "Implementation Requirements:\n\n"
+        priority_groups = {}
+        
         for rule in rules:
             if 'actions' in rule and 'required_steps' in rule['actions']:
-                requirements += f"Priority {rule['priority']} - {rule['type']}:\n"
-                for step in rule['actions']['required_steps']:
-                    requirements += f"- {step}\n"
+                priority = rule['priority']
+                if priority not in priority_groups:
+                    priority_groups[priority] = []
+                priority_groups[priority].extend(rule['actions']['required_steps'])
+        
+        # Sort by priority (highest first) and deduplicate steps
+        for priority in sorted(priority_groups.keys(), reverse=True):
+            requirements += f"Priority {priority} Requirements:\n"
+            unique_steps = list(dict.fromkeys(priority_groups[priority]))
+            for step in unique_steps:
+                requirements += f"- {step}\n"
+            requirements += "\n"
         
         return {
             'name': name,
-            'category': category,
+            'category': primary_category,
             'description': description,
-            'requirements': requirements
+            'requirements': requirements,
+            'additional_categories': list(categories - {primary_category})
         }
         
     except Exception as e:
         logger.error(f"Error creating policy from rules: {str(e)}")
         return None
 
-def process_document(document: ComplianceDocument, file_path: str) -> None:
-    """Process a document and extract compliance rules with progress tracking."""
+def process_document(document: ComplianceDocument, file_path: str, max_retries: int = 3) -> None:
+    """Process a document and extract compliance rules with enhanced error handling and retries."""
+    session = db.session()
+    
+    def update_status(new_status: str, commit: bool = True) -> None:
+        """Helper function to update document status with proper error handling."""
+        try:
+            document.status = new_status
+            if commit:
+                session.commit()
+            logger.info(f"Document {document.filename} status updated to: {new_status}")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating document status: {str(e)}")
+            raise
+    
     try:
-        # Update status to processing
-        document.status = 'processing'
-        db.session.commit()
+        update_status('processing')
         logger.info(f"Started processing document: {document.filename}")
         
         # Step 1: Extract text from PDF (25%)
         logger.info("Extracting text from PDF...")
         text = extract_pdf_text(file_path)
         document.content = text
-        document.status = 'processing_25'
-        db.session.commit()
+        update_status('processing_25')
         
         # Step 2: Process text and extract rules (50%)
         logger.info("Processing text and extracting rules...")
         processed_data = process_document_text(text)
         document.processed_content = text
-        document.status = 'processing_50'
-        db.session.commit()
+        update_status('processing_50')
         
         # Step 3: Validate extracted rules (75%)
         logger.info("Validating extracted rules...")
         valid_rules = [rule for rule in processed_data['rules'] if validate_rule(rule)]
         logger.info(f"Found {len(valid_rules)} valid rules out of {len(processed_data['rules'])} total rules")
-        document.status = 'processing_75'
-        db.session.commit()
+        update_status('processing_75')
         
         # Step 4: Create compliance rules and policy (100%)
         logger.info("Creating compliance rules and policy...")
-        create_compliance_rules(document, valid_rules)
         
-        # Generate and create policy from rules
-        policy_data = create_policy_from_rules(valid_rules)
-        if policy_data:
+        # Use transaction for rules creation
+        try:
+            create_compliance_rules(document, valid_rules)
+            session.flush()  # Ensure rules are created before policy
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error creating compliance rules: {str(e)}")
+            raise
+        
+        # Policy creation with retry logic
+        retry_count = 0
+        policy_created = False
+        last_error = None
+        
+        while retry_count < max_retries and not policy_created:
             try:
-                policy = CompliancePolicy(
-                    name=policy_data['name'],
-                    category=policy_data['category'],
-                    description=policy_data['description'],
-                    requirements=policy_data['requirements'],
-                    status='active'
-                )
-                db.session.add(policy)
-                logger.info(f"Created new compliance policy: {policy_data['name']}")
+                # Generate policy data with unique name
+                policy_data = create_policy_from_rules(valid_rules, document.id)
+                
+                if policy_data:
+                    # Start a nested transaction for policy creation
+                    with session.begin_nested():
+                        policy = CompliancePolicy(
+                            name=policy_data['name'],
+                            category=policy_data['category'],
+                            description=policy_data['description'],
+                            requirements=policy_data['requirements'],
+                            status='active'
+                        )
+                        session.add(policy)
+                        session.flush()
+                        policy_created = True
+                        logger.info(f"Created new compliance policy: {policy_data['name']}")
+                        
+                        # Create additional category policies if needed
+                        for additional_category in policy_data.get('additional_categories', []):
+                            category_policy = CompliancePolicy(
+                                name=f"{policy_data['name']}_{additional_category}",
+                                category=additional_category,
+                                description=policy_data['description'],
+                                requirements=policy_data['requirements'],
+                                status='active'
+                            )
+                            session.add(category_policy)
+                        
+                break  # Exit retry loop if successful
+                
             except Exception as e:
-                logger.error(f"Error creating policy: {str(e)}")
+                session.rollback()
+                last_error = e
+                retry_count += 1
+                logger.warning(f"Policy creation attempt {retry_count} failed: {str(e)}")
+                if retry_count < max_retries:
+                    time.sleep(1)  # Add delay between retries
         
-        document.status = 'processed'
-        db.session.commit()
+        if not policy_created:
+            logger.error(f"Failed to create policy after {max_retries} attempts. Last error: {str(last_error)}")
+            update_status('partial_success', commit=False)
+        else:
+            update_status('processed', commit=False)
+        
+        # Final commit for the entire transaction
+        session.commit()
         logger.info(f"Successfully processed document: {document.filename}")
         
     except Exception as e:
-        document.status = 'error'
-        db.session.commit()
+        session.rollback()
+        update_status('error')
         logger.error(f"Error processing document {document.filename}: {str(e)}")
         raise
+        
+    finally:
+        session.close()
