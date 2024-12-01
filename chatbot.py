@@ -2,6 +2,8 @@ import os
 import json
 import logging
 from openai import OpenAI
+from models import ComplianceRule, ComplianceDocument
+from sqlalchemy import or_
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -10,6 +12,40 @@ logger = logging.getLogger(__name__)
 # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
 # do not change this unless explicitly requested by the user
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+def check_compliance_rules(resource_name: str, action: str) -> dict:
+    """
+    Check compliance rules for the requested resource and action
+    """
+    try:
+        # Get all processed compliance documents' rules
+        rules = (ComplianceRule.query
+                .join(ComplianceDocument)
+                .filter(ComplianceDocument.status == 'processed')
+                .all())
+        
+        applicable_rules = []
+        for rule in rules:
+            # Check if rule applies to the resource and action
+            if (rule.conditions.get('subject', '').lower() in resource_name.lower() or
+                rule.actions.get('action', '').lower() == action.lower()):
+                applicable_rules.append({
+                    'description': rule.description,
+                    'priority': rule.priority,
+                    'type': rule.rule_type
+                })
+        
+        if applicable_rules:
+            return {
+                'has_rules': True,
+                'rules': applicable_rules,
+                'highest_priority': max(rule['priority'] for rule in applicable_rules)
+            }
+        
+        return {'has_rules': False}
+        
+    except Exception as e:
+        logger.error(f"Error checking compliance rules: {str(e)}")
+        return {'has_rules': False, 'error': str(e)}
 openai = OpenAI(api_key=OPENAI_API_KEY)
 
 def process_chat_message(message: str, user) -> dict:
@@ -144,6 +180,21 @@ def process_chat_message(message: str, user) -> dict:
         # Add user context to response
         result['user_role'] = user.role
         result['username'] = user.username
+        
+        # Check compliance rules for access requests
+        if result.get('type') == 'access_request' and 'access_request' in result:
+            resource = result['access_request']['resource']
+            action = result['access_request']['action']
+            
+            compliance_check = check_compliance_rules(resource, action)
+            if compliance_check['has_rules']:
+                result['compliance_rules'] = compliance_check['rules']
+                result['access_request']['compliance_priority'] = compliance_check['highest_priority']
+                
+                # Add compliance requirements to message
+                rule_descriptions = [f"- {rule['description']}" for rule in compliance_check['rules']]
+                compliance_message = "\n\nCompliance Requirements:\n" + "\n".join(rule_descriptions)
+                result['message'] += compliance_message
         
         # Validate response structure
         if 'type' not in result:

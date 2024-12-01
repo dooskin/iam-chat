@@ -63,3 +63,24 @@ class ComplianceRecord(db.Model):
     user = db.relationship('User', foreign_keys=[user_id], backref='compliance_records')
     resource = db.relationship('Resource', backref='compliance_records')
     reviewer = db.relationship('User', foreign_keys=[reviewed_by], backref='reviewed_records')
+
+class ComplianceDocument(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255), nullable=False)
+    content = db.Column(db.Text)
+    processed_content = db.Column(db.Text)
+    uploaded_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    upload_date = db.Column(db.DateTime, default=db.func.now())
+    status = db.Column(db.String(50))  # pending, processed, error
+    
+    user = db.relationship('User', backref='uploaded_documents')
+    rules = db.relationship('ComplianceRule', backref='document', lazy='dynamic')
+
+class ComplianceRule(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(db.Integer, db.ForeignKey('compliance_document.id'))
+    rule_type = db.Column(db.String(50))  # approval, restriction, requirement
+    description = db.Column(db.Text)
+    conditions = db.Column(db.JSON)
+    actions = db.Column(db.JSON)
+    priority = db.Column(db.Integer)

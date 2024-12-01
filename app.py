@@ -8,7 +8,10 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from sqlalchemy.exc import SQLAlchemyError
 from chatbot import process_chat_message
 from database import db
-from models import User, CompliancePolicy, ComplianceRecord
+from models import User, CompliancePolicy, ComplianceRecord, ComplianceDocument
+import os
+from werkzeug.utils import secure_filename
+from document_processor import process_document
 from policy_engine import evaluate_access_request
 
 # Set up logging
@@ -27,7 +30,7 @@ db.init_app(app)
 
 # Configure login manager
 login_manager = LoginManager(app)
-login_manager.login_view = 'login'  # type: ignore
+login_manager.login_view = 'login'
 login_manager.login_message = 'Please log in to access this page.'
 login_manager.login_message_category = 'info'
 
@@ -73,16 +76,10 @@ def login():
         try:
             user = User.query.filter_by(username=username).first()
             if user and check_password_hash(user.password_hash, password):
-                # Set remember=True for persistent sessions
                 login_user(user, remember=True)
-                
-                # Set additional session data if needed
                 session['user_role'] = user.role
                 session.permanent = True
-                
                 logger.info(f'Successful login for user: {username}')
-                
-                # Redirect to next page or index
                 target = next_page if next_page else url_for('index')
                 logger.debug(f'Redirecting user {username} to: {target}')
                 return redirect(target)
@@ -184,6 +181,7 @@ def update_user_role(user_id):
         logger.error(f'Error updating user role: {str(e)}')
         
     return redirect(url_for('users'))
+
 @app.route('/integrations')
 @login_required
 def integrations():
@@ -206,6 +204,9 @@ def compliance():
     compliant_records = ComplianceRecord.query.filter_by(status='compliant').count()
     compliance_rate = round((compliant_records / total_records * 100) if total_records > 0 else 0)
     
+    # Get documents and their processing status
+    documents = ComplianceDocument.query.order_by(ComplianceDocument.upload_date.desc()).all()
+    
     # Get policies and recent records
     policies = CompliancePolicy.query.order_by(CompliancePolicy.updated_at.desc()).all()
     records = ComplianceRecord.query.order_by(ComplianceRecord.updated_at.desc()).limit(10).all()
@@ -215,6 +216,7 @@ def compliance():
                          pending_reviews_count=pending_reviews,
                          compliance_rate=compliance_rate,
                          policies=policies,
+                         documents=documents,
                          records=records)
 
 @app.route('/compliance/policy', methods=['POST'])
@@ -234,9 +236,58 @@ def add_compliance_policy():
         db.session.add(policy)
         db.session.commit()
         flash('Compliance policy added successfully', 'success')
+        
     except Exception as e:
         db.session.rollback()
         flash(f'Error adding policy: {str(e)}', 'danger')
+        
+    return redirect(url_for('compliance'))
+
+@app.route('/compliance/document/upload', methods=['POST'])
+@login_required
+def upload_compliance_document():
+    if current_user.role != 'admin':
+        flash('Permission denied', 'danger')
+        return redirect(url_for('compliance'))
+        
+    if 'document' not in request.files:
+        flash('No document provided', 'danger')
+        return redirect(url_for('compliance'))
+        
+    file = request.files['document']
+    if file.filename == '':
+        flash('No selected file', 'danger')
+        return redirect(url_for('compliance'))
+        
+    if not file.filename.lower().endswith('.pdf'):
+        flash('Only PDF files are allowed', 'danger')
+        return redirect(url_for('compliance'))
+        
+    try:
+        filename = secure_filename(file.filename)
+        upload_dir = os.path.join(app.instance_path, 'uploads')
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, filename)
+        file.save(file_path)
+        
+        document = ComplianceDocument(
+            filename=filename,
+            uploaded_by=current_user.id,
+            status='pending'
+        )
+        db.session.add(document)
+        db.session.commit()
+        
+        # Process document in the background
+        try:
+            process_document(document, file_path)
+            flash('Document uploaded and processed successfully', 'success')
+        except Exception as e:
+            logger.error(f"Error processing document: {str(e)}")
+            flash('Error processing document', 'danger')
+            
+    except Exception as e:
+        flash(f'Error uploading document: {str(e)}', 'danger')
         
     return redirect(url_for('compliance'))
 
@@ -246,6 +297,7 @@ def view_policy(policy_id):
     policy = CompliancePolicy.query.get_or_404(policy_id)
     records = ComplianceRecord.query.filter_by(policy_id=policy_id).all()
     return render_template('policy_detail.html', policy=policy, records=records)
+
 @app.route('/settings/update', methods=['POST'])
 @login_required
 def update_settings():

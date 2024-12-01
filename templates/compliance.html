@@ -40,6 +40,65 @@
         </div>
     </div>
 
+    <!-- Document Upload Section -->
+    {% if current_user.role == 'admin' %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Upload Compliance Document</h5>
+        </div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('upload_compliance_document') }}" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label for="document" class="form-label">Select PDF Document</label>
+                    <input type="file" class="form-control" id="document" name="document" accept=".pdf" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Upload & Process</button>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Document Processing Status -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Document Processing Status</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Document</th>
+                            <th>Status</th>
+                            <th>Upload Date</th>
+                            <th>Rules Extracted</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for doc in documents %}
+                        <tr>
+                            <td>{{ doc.filename }}</td>
+                            <td>
+                                <span class="badge bg-{{ 'success' if doc.status == 'processed' 
+                                    else 'warning' if doc.status == 'pending'
+                                    else 'danger' }}">
+                                    {{ doc.status }}
+                                </span>
+                            </td>
+                            <td>{{ doc.upload_date.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td>{{ doc.rules.count() }}</td>
+                            <td>
+                                <button class="btn btn-sm btn-secondary" onclick="viewDocument({{ doc.id }})">View Rules</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- Compliance Policies -->
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
