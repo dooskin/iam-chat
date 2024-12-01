@@ -462,30 +462,60 @@ function editPolicy(policyId) {
     window.location.href = `/compliance/policy/${policyId}/edit`;
 }
 
-// Handle rule section toggling
+// Handle rule section toggling with enhanced error handling and debugging
 function toggleRules(docId, button) {
+    console.log(`Toggling rules for document ${docId}`);
+    
     const rulesRow = document.getElementById(`rules-row-${docId}`);
     const rulesContainer = rulesRow.querySelector('.rules-container');
     const rulesContent = rulesContainer.querySelector('.rules-content');
+    const loadingSpinner = rulesContainer.querySelector('.loading-spinner');
+    
+    if (!rulesRow || !rulesContainer || !rulesContent) {
+        console.error('Required DOM elements not found:', {
+            rulesRow: !!rulesRow,
+            rulesContainer: !!rulesContainer,
+            rulesContent: !!rulesContent
+        });
+        return;
+    }
     
     if (rulesRow.style.display === 'none') {
-        // Show the row and load rules
+        console.log('Expanding rules section');
+        
+        // Show the row and container with proper animation sequence
         rulesRow.style.display = 'table-row';
         rulesContainer.style.display = 'block';
-        setTimeout(() => rulesContainer.classList.add('show'), 50);
-        button.textContent = 'Hide Rules';
+        loadingSpinner.style.display = 'block';
+        rulesContent.style.display = 'none';
         
-        // Fetch and display rules
+        // Trigger animation after brief delay for proper rendering
+        requestAnimationFrame(() => {
+            rulesContainer.classList.add('show');
+            button.textContent = 'Hide Rules';
+        });
+        
+        // Fetch and display rules with enhanced error handling
+        console.log('Fetching rules from server');
         fetch(`/compliance/document/${docId}/rules`)
             .then(response => {
+                console.log('Server response received:', response.status);
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    throw new Error(`Server returned ${response.status}: ${response.statusText}`);
                 }
                 return response.json();
             })
             .then(data => {
+                console.log('Processing rules data:', {
+                    ruleCount: data.rules ? data.rules.length : 0
+                });
+                
                 if (!data.rules || data.rules.length === 0) {
-                    rulesContent.innerHTML = '<div class="alert alert-info">No rules found for this document.</div>';
+                    rulesContent.innerHTML = `
+                        <div class="alert alert-info">
+                            <h5 class="alert-heading">No Rules Found</h5>
+                            <p>This document doesn't have any compliance rules yet.</p>
+                        </div>`;
                     return;
                 }
                 
@@ -532,30 +562,48 @@ function toggleRules(docId, button) {
                     </div>
                 `).join('');
                 
-                rulesContainer.querySelector('.loading-spinner').style.display = 'none';
+                // Smooth transition from loading to content
+                loadingSpinner.style.display = 'none';
+                rulesContent.style.opacity = '0';
                 rulesContent.style.display = 'block';
+                requestAnimationFrame(() => {
+                    rulesContent.style.opacity = '1';
+                    rulesContent.style.transition = 'opacity 0.3s ease-in-out';
+                });
             })
             .catch(error => {
-                console.error('Error fetching rules:', error);
+                console.error('Error processing rules:', error);
                 rulesContent.innerHTML = `
                     <div class="alert alert-danger">
                         <h5 class="alert-heading">Error Loading Rules</h5>
-                        <p>There was an error loading the rules for this document. Please try again later.</p>
+                        <p>There was an error loading the rules for this document.</p>
                         <hr>
-                        <p class="mb-0">Technical details: ${error.message}</p>
+                        <p class="mb-0">
+                            <strong>Details:</strong> ${error.message}
+                            <br>
+                            <button class="btn btn-sm btn-outline-light mt-2" onclick="toggleRules(${docId}, this)">
+                                Try Again
+                            </button>
+                        </p>
                     </div>
                 `;
+                loadingSpinner.style.display = 'none';
+                rulesContent.style.display = 'block';
             });
     } else {
-        // Hide the row
+        console.log('Collapsing rules section');
+        
+        // Smooth collapse animation
         rulesContainer.classList.remove('show');
         button.textContent = 'View Rules';
+        
+        // Wait for animation to complete before hiding
         setTimeout(() => {
             rulesRow.style.display = 'none';
             rulesContainer.style.display = 'none';
+            rulesContent.innerHTML = '';  // Clear content when hidden
         }, 300);
     }
-}
 }
 
 function getPriorityBadgeClass(priority) {
