@@ -314,6 +314,57 @@ def view_policy(policy_id):
     return render_template('policy_detail.html', policy=policy, records=records)
 
 @app.route('/settings/update', methods=['POST'])
+@login_required
+def update_settings():
+    try:
+        # Update email
+        email = request.form.get('email')
+        if email and email != current_user.email:
+            # Check if email is already in use
+            if User.query.filter_by(email=email).first():
+                flash('Email already in use', 'danger')
+                return redirect(url_for('settings'))
+            current_user.email = email
+            flash('Email updated successfully', 'success')
+
+        # Update password
+        current_password = request.form.get('current_password')
+        new_password = request.form.get('new_password')
+        confirm_password = request.form.get('confirm_password')
+
+        if current_password and new_password and confirm_password:
+            if new_password != confirm_password:
+                flash('New passwords do not match', 'danger')
+                return redirect(url_for('settings'))
+                
+            if not check_password_hash(current_user.password_hash, current_password):
+                flash('Current password is incorrect', 'danger')
+                return redirect(url_for('settings'))
+                
+            if len(new_password) < 8:
+                flash('Password must be at least 8 characters long', 'danger')
+                return redirect(url_for('settings'))
+                
+            current_user.password_hash = generate_password_hash(new_password)
+            flash('Password updated successfully', 'success')
+
+        # Update notification preferences
+        notification_prefs = {}
+        for pref in ['email_notifications', 'security_alerts', 'compliance_updates']:
+            notification_prefs[pref] = request.form.get(pref) == 'on'
+        
+        current_user.notification_preferences = notification_prefs
+        flash('Notification preferences updated successfully', 'success')
+
+        db.session.commit()
+        
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        flash('Error updating settings', 'danger')
+        logger.error(f'Error updating settings: {str(e)}')
+
+    return redirect(url_for('settings'))
+
 @app.route('/compliance/document/<int:doc_id>/delete', methods=['POST'])
 @login_required
 def delete_compliance_document(doc_id):
@@ -370,25 +421,49 @@ def get_document_rules(doc_id):
     
     return jsonify({'rules': rules_data})
 
-@login_required
 def update_settings():
     try:
+        # Update email
         email = request.form.get('email')
-        current_password = request.form.get('current_password')
-        new_password = request.form.get('new_password')
-
         if email and email != current_user.email:
+            # Check if email is already in use
+            if User.query.filter_by(email=email).first():
+                flash('Email already in use', 'danger')
+                return redirect(url_for('settings'))
             current_user.email = email
             flash('Email updated successfully', 'success')
 
-        if current_password and new_password:
-            if check_password_hash(current_user.password_hash, current_password):
-                current_user.password_hash = generate_password_hash(new_password)
-                flash('Password updated successfully', 'success')
-            else:
+        # Update password
+        current_password = request.form.get('current_password')
+        new_password = request.form.get('new_password')
+        confirm_password = request.form.get('confirm_password')
+
+        if current_password and new_password and confirm_password:
+            if new_password != confirm_password:
+                flash('New passwords do not match', 'danger')
+                return redirect(url_for('settings'))
+                
+            if not check_password_hash(current_user.password_hash, current_password):
                 flash('Current password is incorrect', 'danger')
+                return redirect(url_for('settings'))
+                
+            if len(new_password) < 8:
+                flash('Password must be at least 8 characters long', 'danger')
+                return redirect(url_for('settings'))
+                
+            current_user.password_hash = generate_password_hash(new_password)
+            flash('Password updated successfully', 'success')
+
+        # Update notification preferences
+        notification_prefs = {}
+        for pref in ['email_notifications', 'security_alerts', 'compliance_updates']:
+            notification_prefs[pref] = request.form.get(pref) == 'on'
+        
+        current_user.notification_preferences = notification_prefs
+        flash('Notification preferences updated successfully', 'success')
 
         db.session.commit()
+        
     except SQLAlchemyError as e:
         db.session.rollback()
         flash('Error updating settings', 'danger')

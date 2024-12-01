@@ -1,43 +1,82 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="card">
-    <div class="card-header">
-        <h2>Settings</h2>
-    </div>
-    <div class="card-body">
-        <div class="row">
-            <div class="col-md-6">
-                <h5 class="card-title">Account Settings</h5>
-                <form method="POST" action="{{ url_for('update_settings') }}" class="mb-4">
-                    <div class="mb-3">
-                        <label for="email" class="form-label">Email Address</label>
-                        <input type="email" class="form-control" id="email" name="email" value="{{ current_user.email }}" required>
+<div class="container py-4">
+    <div class="card">
+        <div class="card-header bg-dark">
+            <h2 class="mb-0">Settings</h2>
+        </div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('update_settings') }}">
+                <div class="row">
+                    <!-- Profile Settings -->
+                    <div class="col-md-6 mb-4">
+                        <h5 class="card-title border-bottom pb-2">Profile Settings</h5>
+                        <div class="mb-3">
+                            <label for="email" class="form-label">Email Address</label>
+                            <input type="email" class="form-control" id="email" name="email" value="{{ current_user.email }}" required>
+                        </div>
+                        <div class="mb-4">
+                            <label for="username" class="form-label">Username</label>
+                            <input type="text" class="form-control" value="{{ current_user.username }}" readonly>
+                            <small class="text-muted">Username cannot be changed</small>
+                        </div>
                     </div>
-                    <div class="mb-3">
-                        <label for="current_password" class="form-label">Current Password</label>
-                        <input type="password" class="form-control" id="current_password" name="current_password">
+
+                    <!-- Password Management -->
+                    <div class="col-md-6 mb-4">
+                        <h5 class="card-title border-bottom pb-2">Password Management</h5>
+                        <div class="mb-3">
+                            <label for="current_password" class="form-label">Current Password</label>
+                            <input type="password" class="form-control" id="current_password" name="current_password">
+                        </div>
+                        <div class="mb-3">
+                            <label for="new_password" class="form-label">New Password</label>
+                            <input type="password" class="form-control" id="new_password" name="new_password">
+                        </div>
+                        <div class="mb-3">
+                            <label for="confirm_password" class="form-label">Confirm New Password</label>
+                            <input type="password" class="form-control" id="confirm_password" name="confirm_password">
+                        </div>
                     </div>
-                    <div class="mb-3">
-                        <label for="new_password" class="form-label">New Password</label>
-                        <input type="password" class="form-control" id="new_password" name="new_password">
-                    </div>
-                    <button type="submit" class="btn btn-primary">Update Settings</button>
-                </form>
-            </div>
-            
-            <div class="col-md-6">
-                <h5 class="card-title">Interface Preferences</h5>
-                <div class="mb-3">
-                    <label class="form-label d-block">Chat Message Display</label>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="showTimestamp" checked>
-                        <label class="form-check-label" for="showTimestamp">
-                            Show message timestamps
-                        </label>
+
+                    <!-- Notification Preferences -->
+                    <div class="col-12 mb-4">
+                        <h5 class="card-title border-bottom pb-2">Notification Preferences</h5>
+                        <div class="mb-3">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="email_notifications" name="email_notifications"
+                                    {% if current_user.notification_preferences.email_notifications %}checked{% endif %}>
+                                <label class="form-check-label" for="email_notifications">
+                                    Email Notifications
+                                    <small class="d-block text-muted">Receive important updates via email</small>
+                                </label>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="security_alerts" name="security_alerts"
+                                    {% if current_user.notification_preferences.security_alerts %}checked{% endif %}>
+                                <label class="form-check-label" for="security_alerts">
+                                    Security Alerts
+                                    <small class="d-block text-muted">Get notified about security-related events</small>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="compliance_updates" name="compliance_updates"
+                                    {% if current_user.notification_preferences.compliance_updates %}checked{% endif %}>
+                                <label class="form-check-label" for="compliance_updates">
+                                    Compliance Updates
+                                    <small class="d-block text-muted">Receive notifications about compliance policy changes</small>
+                                </label>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
+
+                <!-- Submit Button -->
+                <div class="text-end">
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>

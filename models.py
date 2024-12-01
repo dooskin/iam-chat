@@ -8,11 +8,22 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256))
     role = db.Column(db.String(64), nullable=False, default='user')
     
+    notification_preferences = db.Column(db.JSON, default=lambda: {
+        'email_notifications': True,
+        'security_alerts': True,
+        'compliance_updates': True
+    })
+
     def __init__(self, username, email, password_hash, role='user'):
         self.username = username
         self.email = email
         self.password_hash = password_hash
         self.role = role
+        self.notification_preferences = {
+            'email_notifications': True,
+            'security_alerts': True,
+            'compliance_updates': True
+        }
 
 class Resource(db.Model):
     id = db.Column(db.Integer, primary_key=True)
