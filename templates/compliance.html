@@ -114,7 +114,19 @@
                             <td>{{ doc.upload_date.strftime('%Y-%m-%d %H:%M') }}</td>
                             <td>{{ doc.rules.count() }}</td>
                             <td>
-                                <button class="btn btn-sm btn-secondary" onclick="viewDocument({{ doc.id }})">View Rules</button>
+                                <button class="btn btn-sm btn-secondary" onclick="toggleRules({{ doc.id }}, this)">View Rules</button>
+                            </td>
+                        </tr>
+                        <tr id="rules-row-{{ doc.id }}" class="rules-row" style="display: none;">
+                            <td colspan="5">
+                                <div class="rules-container p-3" style="display: none;">
+                                    <div class="loading-spinner text-center">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                    </div>
+                                    <div class="rules-content"></div>
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
@@ -255,22 +267,36 @@
 {% endif %}
 {% endblock %}
 
-<!-- View Rules Modal -->
-<div class="modal fade" id="viewRulesModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Extracted Compliance Rules</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <div id="rulesContainer">
-                    <!-- Rules will be loaded here -->
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+<!-- Add styles for rule animations -->
+<style>
+.rules-row {
+    background-color: var(--bs-dark);
+    transition: all 0.3s ease-in-out;
+}
+
+.rules-container {
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s ease-in-out;
+}
+
+.rules-container.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.rule-card {
+    border-left: 4px solid;
+    margin-bottom: 1rem;
+    background-color: var(--bs-dark);
+}
+
+.rule-card.priority-1 { border-color: var(--bs-info); }
+.rule-card.priority-2 { border-color: var(--bs-success); }
+.rule-card.priority-3 { border-color: var(--bs-warning); }
+.rule-card.priority-4 { border-color: var(--bs-danger); }
+.rule-card.priority-5 { border-color: var(--bs-dark); }
+</style>
 
 <!-- Update JavaScript -->
 <script>
@@ -436,73 +462,100 @@ function editPolicy(policyId) {
     window.location.href = `/compliance/policy/${policyId}/edit`;
 }
 
-// Enhanced error handling for rule display
-function viewDocument(docId) {
-    const container = document.getElementById('rulesContainer');
-    container.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+// Handle rule section toggling
+function toggleRules(docId, button) {
+    const rulesRow = document.getElementById(`rules-row-${docId}`);
+    const rulesContainer = rulesRow.querySelector('.rules-container');
+    const rulesContent = rulesContainer.querySelector('.rules-content');
     
-    const modal = new bootstrap.Modal(document.getElementById('viewRulesModal'));
-    modal.show();
-    
-    fetch(`/compliance/document/${docId}/rules`)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            container.innerHTML = '';
-            
-            if (!data.rules || data.rules.length === 0) {
-                container.innerHTML = '<div class="alert alert-info">No rules found for this document.</div>';
-                return;
-            }
-            
-            data.rules.forEach(rule => {
-                const ruleElement = document.createElement('div');
-                ruleElement.className = 'card mb-3';
-                ruleElement.innerHTML = `
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h6 class="mb-0">${rule.type || 'Unknown Type'}</h6>
-                        <span class="badge bg-${getPriorityBadgeClass(rule.priority)}">
-                            Priority: ${rule.priority || 'N/A'}
-                        </span>
+    if (rulesRow.style.display === 'none') {
+        // Show the row and load rules
+        rulesRow.style.display = 'table-row';
+        rulesContainer.style.display = 'block';
+        setTimeout(() => rulesContainer.classList.add('show'), 50);
+        button.textContent = 'Hide Rules';
+        
+        // Fetch and display rules
+        fetch(`/compliance/document/${docId}/rules`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (!data.rules || data.rules.length === 0) {
+                    rulesContent.innerHTML = '<div class="alert alert-info">No rules found for this document.</div>';
+                    return;
+                }
+                
+                rulesContent.innerHTML = data.rules.map(rule => `
+                    <div class="card rule-card priority-${rule.priority || 1} mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">
+                                <span class="badge bg-${getPriorityBadgeClass(rule.priority)}">
+                                    Priority ${rule.priority || 'N/A'}
+                                </span>
+                                ${rule.type || 'Unknown Type'}
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <p class="mb-3"><strong>Description:</strong> ${rule.description || 'No description available'}</p>
+                            
+                            <div class="mb-3">
+                                <h6>Conditions:</h6>
+                                <ul class="list-unstyled ps-3">
+                                    ${rule.conditions ? `
+                                        <li><i class="bi bi-arrow-right"></i> Subject: ${rule.conditions.subject || 'Not specified'}</li>
+                                        <li><i class="bi bi-arrow-right"></i> Timing: ${rule.conditions.timing || 'Not specified'}</li>
+                                        ${rule.conditions.prerequisites ? `<li><i class="bi bi-arrow-right"></i> Prerequisites: ${rule.conditions.prerequisites}</li>` : ''}
+                                    ` : '<li>No conditions specified</li>'}
+                                </ul>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <h6>Required Actions:</h6>
+                                <ul class="list-unstyled ps-3">
+                                    ${rule.actions && rule.actions.required_steps ? 
+                                        rule.actions.required_steps.map(step => `<li><i class="bi bi-check2"></i> ${step}</li>`).join('') :
+                                        '<li>No required steps specified</li>'}
+                                </ul>
+                            </div>
+                            
+                            ${rule.actions && rule.actions.verification ? `
+                                <div>
+                                    <h6>Verification:</h6>
+                                    <p class="mb-0 ps-3">${rule.actions.verification}</p>
+                                </div>
+                            ` : ''}
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <p><strong>Description:</strong> ${rule.description || 'No description available'}</p>
-                        <p><strong>Conditions:</strong></p>
-                        <ul>
-                            ${rule.conditions ? `
-                                <li>Subject: ${rule.conditions.subject || 'Not specified'}</li>
-                                <li>Timing: ${rule.conditions.timing || 'Not specified'}</li>
-                                ${rule.conditions.prerequisites ? `<li>Prerequisites: ${rule.conditions.prerequisites}</li>` : ''}
-                            ` : '<li>No conditions specified</li>'}
-                        </ul>
-                        <p><strong>Required Actions:</strong></p>
-                        <ul>
-                            ${rule.actions && rule.actions.required_steps ? 
-                                rule.actions.required_steps.map(step => `<li>${step}</li>`).join('') :
-                                '<li>No required steps specified</li>'}
-                        </ul>
-                        ${rule.actions && rule.actions.verification ? 
-                            `<p><strong>Verification:</strong> ${rule.actions.verification}</p>` : ''}
+                `).join('');
+                
+                rulesContainer.querySelector('.loading-spinner').style.display = 'none';
+                rulesContent.style.display = 'block';
+            })
+            .catch(error => {
+                console.error('Error fetching rules:', error);
+                rulesContent.innerHTML = `
+                    <div class="alert alert-danger">
+                        <h5 class="alert-heading">Error Loading Rules</h5>
+                        <p>There was an error loading the rules for this document. Please try again later.</p>
+                        <hr>
+                        <p class="mb-0">Technical details: ${error.message}</p>
                     </div>
                 `;
-                container.appendChild(ruleElement);
             });
-        })
-        .catch(error => {
-            console.error('Error fetching rules:', error);
-            container.innerHTML = `
-                <div class="alert alert-danger">
-                    <h5 class="alert-heading">Error Loading Rules</h5>
-                    <p>There was an error loading the rules for this document. Please try again later.</p>
-                    <hr>
-                    <p class="mb-0">Technical details: ${error.message}</p>
-                </div>
-            `;
-        });
+    } else {
+        // Hide the row
+        rulesContainer.classList.remove('show');
+        button.textContent = 'View Rules';
+        setTimeout(() => {
+            rulesRow.style.display = 'none';
+            rulesContainer.style.display = 'none';
+        }, 300);
+    }
+}
 }
 
 function getPriorityBadgeClass(priority) {
