@@ -115,6 +115,9 @@
                             <td>{{ doc.rules.count() }}</td>
                             <td>
                                 <button class="btn btn-sm btn-secondary" onclick="toggleRules({{ doc.id }}, this)">View Rules</button>
+                                {% if current_user.role == 'admin' %}
+                                <button class="btn btn-sm btn-danger" onclick="deleteDocument({{ doc.id }})">Delete</button>
+                                {% endif %}
                             </td>
                         </tr>
                         <tr id="rules-row-{{ doc.id }}" class="rules-row" style="display: none;">
@@ -614,6 +617,23 @@ function getPriorityBadgeClass(priority) {
         case 4: return 'danger';
         case 5: return 'dark';
         default: return 'secondary';
+    }
+}
+
+function deleteDocument(docId) {
+    if (confirm('Are you sure you want to delete this document? This action cannot be undone.')) {
+        fetch(`/compliance/document/${docId}/delete`, {
+            method: 'POST',
+            credentials: 'same-origin'
+        })
+        .then(response => {
+            if (!response.ok) throw new Error('Delete failed');
+            location.reload();
+        })
+        .catch(error => {
+            console.error('Delete error:', error);
+            alert('Error deleting document. Please try again.');
+        });
     }
 }
 </script>
