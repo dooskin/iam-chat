@@ -194,6 +194,58 @@ def integrations():
 def settings():
     return render_template('settings.html')
 
+@app.route('/compliance')
+@login_required
+def compliance():
+    # Get compliance statistics
+    active_policies = CompliancePolicy.query.filter_by(status='active').count()
+    pending_reviews = ComplianceRecord.query.filter_by(status='pending_review').count()
+    
+    # Calculate compliance rate
+    total_records = ComplianceRecord.query.count()
+    compliant_records = ComplianceRecord.query.filter_by(status='compliant').count()
+    compliance_rate = round((compliant_records / total_records * 100) if total_records > 0 else 0)
+    
+    # Get policies and recent records
+    policies = CompliancePolicy.query.order_by(CompliancePolicy.updated_at.desc()).all()
+    records = ComplianceRecord.query.order_by(ComplianceRecord.updated_at.desc()).limit(10).all()
+    
+    return render_template('compliance.html',
+                         active_policies_count=active_policies,
+                         pending_reviews_count=pending_reviews,
+                         compliance_rate=compliance_rate,
+                         policies=policies,
+                         records=records)
+
+@app.route('/compliance/policy', methods=['POST'])
+@login_required
+def add_compliance_policy():
+    if current_user.role != 'admin':
+        flash('Permission denied', 'danger')
+        return redirect(url_for('compliance'))
+        
+    try:
+        policy = CompliancePolicy(
+            name=request.form['name'],
+            category=request.form['category'],
+            description=request.form['description'],
+            requirements=request.form['requirements']
+        )
+        db.session.add(policy)
+        db.session.commit()
+        flash('Compliance policy added successfully', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error adding policy: {str(e)}', 'danger')
+        
+    return redirect(url_for('compliance'))
+
+@app.route('/compliance/policy/<int:policy_id>')
+@login_required
+def view_policy(policy_id):
+    policy = CompliancePolicy.query.get_or_404(policy_id)
+    records = ComplianceRecord.query.filter_by(policy_id=policy_id).all()
+    return render_template('policy_detail.html', policy=policy, records=records)
 @app.route('/settings/update', methods=['POST'])
 @login_required
 def update_settings():

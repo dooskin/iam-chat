@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2 class="mb-4">ComplianceHub</h2>
+    
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <!-- Compliance Overview -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Active Policies</h5>
+                    <h2 class="card-text">{{ active_policies_count }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Pending Reviews</h5>
+                    <h2 class="card-text">{{ pending_reviews_count }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Compliance Rate</h5>
+                    <h2 class="card-text">{{ compliance_rate }}%</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Compliance Policies -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Compliance Policies</h5>
+            {% if current_user.role == 'admin' %}
+            <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addPolicyModal">
+                Add Policy
+            </button>
+            {% endif %}
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Category</th>
+                            <th>Status</th>
+                            <th>Last Updated</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for policy in policies %}
+                        <tr>
+                            <td>{{ policy.name }}</td>
+                            <td><span class="badge bg-info">{{ policy.category }}</span></td>
+                            <td>
+                                <span class="badge bg-{{ 'success' if policy.status == 'active' else 'warning' }}">
+                                    {{ policy.status }}
+                                </span>
+                            </td>
+                            <td>{{ policy.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td>
+                                <button class="btn btn-sm btn-secondary" onclick="viewPolicy({{ policy.id }})">View</button>
+                                {% if current_user.role == 'admin' %}
+                                <button class="btn btn-sm btn-primary" onclick="editPolicy({{ policy.id }})">Edit</button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Compliance Records -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Recent Compliance Records</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Policy</th>
+                            <th>Resource</th>
+                            <th>Status</th>
+                            <th>Date</th>
+                            <th>Reviewed By</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in records %}
+                        <tr>
+                            <td>{{ record.policy.name }}</td>
+                            <td>{{ record.resource.name }}</td>
+                            <td>
+                                <span class="badge bg-{{ 'success' if record.status == 'compliant' 
+                                    else 'danger' if record.status == 'non_compliant' 
+                                    else 'warning' }}">
+                                    {{ record.status }}
+                                </span>
+                            </td>
+                            <td>{{ record.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td>{{ record.reviewer.username if record.reviewer else 'Pending' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Policy Modal -->
+{% if current_user.role == 'admin' %}
+<div class="modal fade" id="addPolicyModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Compliance Policy</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('add_compliance_policy') }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Policy Name</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="category" class="form-label">Category</label>
+                        <select class="form-select" id="category" name="category" required>
+                            <option value="GDPR">GDPR</option>
+                            <option value="SOX">SOX</option>
+                            <option value="HIPAA">HIPAA</option>
+                            <option value="ISO27001">ISO 27001</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea class="form-control" id="description" name="description" rows="3" required></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="requirements" class="form-label">Requirements</label>
+                        <textarea class="form-control" id="requirements" name="requirements" rows="3" required></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Add Policy</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function viewPolicy(policyId) {
+    // Implement policy viewing logic
+    window.location.href = `/compliance/policy/${policyId}`;
+}
+
+function editPolicy(policyId) {
+    // Implement policy editing logic
+    window.location.href = `/compliance/policy/${policyId}/edit`;
+}
+</script>
+{% endblock %}
