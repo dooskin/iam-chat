@@ -80,11 +80,25 @@
                         <tr>
                             <td>{{ doc.filename }}</td>
                             <td>
-                                <span class="badge bg-{{ 'success' if doc.status == 'processed' 
-                                    else 'warning' if doc.status == 'pending'
-                                    else 'danger' }}">
-                                    {{ doc.status }}
-                                </span>
+                                {% if doc.status.startswith('processing') %}
+                                    {% set progress = doc.status.split('_')[1]|int if '_' in doc.status else 25 %}
+                                    <div class="progress" style="height: 20px;">
+                                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                             role="progressbar" 
+                                             style="width: {{ progress }}%"
+                                             aria-valuenow="{{ progress }}" 
+                                             aria-valuemin="0" 
+                                             aria-valuemax="100">
+                                            {{ progress }}%
+                                        </div>
+                                    </div>
+                                {% else %}
+                                    <span class="badge bg-{{ 'success' if doc.status == 'processed' 
+                                        else 'warning' if doc.status == 'pending'
+                                        else 'danger' }}">
+                                        {{ doc.status }}
+                                    </span>
+                                {% endif %}
                             </td>
                             <td>{{ doc.upload_date.strftime('%Y-%m-%d %H:%M') }}</td>
                             <td>{{ doc.rules.count() }}</td>
@@ -230,6 +244,67 @@
 {% endif %}
 {% endblock %}
 
+<!-- View Rules Modal -->
+<div class="modal fade" id="viewRulesModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Extracted Compliance Rules</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="rulesContainer">
+                    <!-- Rules will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Update JavaScript -->
+<script>
+function viewDocument(docId) {
+    fetch(`/compliance/document/${docId}/rules`)
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('rulesContainer');
+            container.innerHTML = '';
+            
+            data.rules.forEach(rule => {
+                const ruleElement = document.createElement('div');
+                ruleElement.className = 'card mb-3';
+                ruleElement.innerHTML = `
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">${rule.type}</h6>
+                        <span class="badge bg-primary">Priority: ${rule.priority}</span>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>Description:</strong> ${rule.description}</p>
+                        <p><strong>Conditions:</strong></p>
+                        <ul>
+                            <li>Subject: ${rule.conditions.subject}</li>
+                            <li>Timing: ${rule.conditions.timing}</li>
+                            ${rule.conditions.prerequisites ? `<li>Prerequisites: ${rule.conditions.prerequisites}</li>` : ''}
+                        </ul>
+                        <p><strong>Required Actions:</strong></p>
+                        <ul>
+                            ${rule.actions.required_steps.map(step => `<li>${step}</li>`).join('')}
+                        </ul>
+                        <p><strong>Verification:</strong> ${rule.actions.verification}</p>
+                    </div>
+                `;
+                container.appendChild(ruleElement);
+            });
+            
+            const modal = new bootstrap.Modal(document.getElementById('viewRulesModal'));
+            modal.show();
+        })
+        .catch(error => {
+            console.error('Error fetching rules:', error);
+            alert('Error loading rules. Please try again.');
+        });
+}
+</script>
 {% block scripts %}
 <script>
 function viewPolicy(policyId) {

@@ -299,6 +299,23 @@ def view_policy(policy_id):
     return render_template('policy_detail.html', policy=policy, records=records)
 
 @app.route('/settings/update', methods=['POST'])
+@app.route('/compliance/document/<int:doc_id>/rules')
+@login_required
+def get_document_rules(doc_id):
+    """Fetch rules for a specific compliance document."""
+    document = ComplianceDocument.query.get_or_404(doc_id)
+    rules = document.rules.all()
+    
+    rules_data = [{
+        'type': rule.rule_type,
+        'description': rule.description,
+        'conditions': rule.conditions,
+        'actions': rule.actions,
+        'priority': rule.priority
+    } for rule in rules]
+    
+    return jsonify({'rules': rules_data})
+
 @login_required
 def update_settings():
     try:

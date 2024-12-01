@@ -53,7 +53,7 @@ def process_chat_message(message: str, user) -> dict:
     Process user message using OpenAI API and return structured response for access management
     """
     try:
-        system_prompt = """You are an Enterprise Access Management AI assistant specializing in Role-Based Access Control (RBAC) and Zero Trust Security principles. Your primary responsibilities are:
+        system_prompt = """You are an Enterprise Access Management AI assistant specializing in Role-Based Access Control (RBAC), Zero Trust Security principles, and Compliance Management. Your primary responsibilities are:
 
         1. Process and validate access management requests with strict adherence to:
            - User roles and granular permissions mapping
@@ -62,6 +62,9 @@ def process_chat_message(message: str, user) -> dict:
            - Industry compliance requirements (SOX, GDPR, HIPAA)
            - Time-based access controls and session management
            - Geographic access restrictions and network segmentation
+           - Extracted compliance rules and policies
+           - Real-time policy engine integration
+           - Enhanced security verification checks
 
         2. Guide users through enterprise access management processes:
            - Just-in-Time (JIT) access requests and temporary elevation

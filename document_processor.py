@@ -73,38 +73,75 @@ def process_document_text(text: str) -> Dict[str, List[Dict]]:
     try:
         client = OpenAI()
         
-        system_prompt = """Analyze this compliance document and extract:
-        - Security requirements
-        - Access control rules
-        - Approval workflows
-        - Compliance requirements
-        
-        Format rules as structured data with:
-        - Rule type (approval, restriction, requirement)
-        - Description (clear explanation of the rule)
-        - Conditions (who/what/when)
-        - Actions (required steps)
-        - Priority (1-5 based on security impact, where:
-          1: Low impact, general guidelines
-          2: Moderate impact, recommended practices
-          3: High impact, mandatory controls
-          4: Very high impact, critical security controls
-          5: Severe impact, fundamental security requirements)
-        
+        system_prompt = """You are an expert compliance analyst specializing in security and access control. 
+        Analyze this compliance document and extract detailed rules focusing on:
+
+        1. Security Requirements:
+           - Authentication and authorization controls
+           - Data protection measures
+           - System access restrictions
+           - Security monitoring requirements
+
+        2. Access Control Rules:
+           - Role-based access control (RBAC) policies
+           - Privilege management
+           - Access review procedures
+           - Separation of duties requirements
+
+        3. Approval Workflows:
+           - Multi-level approval processes
+           - Emergency access procedures
+           - Access request handling
+           - Periodic review requirements
+
+        4. Compliance Requirements:
+           - Regulatory compliance measures (GDPR, SOX, HIPAA)
+           - Audit trail requirements
+           - Documentation standards
+           - Reporting obligations
+
+        Extract and categorize rules using these criteria:
+        Priority Levels:
+        1. Low Impact:
+           - General guidelines
+           - Best practices recommendations
+           - Optional enhancements
+        2. Moderate Impact:
+           - Recommended security practices
+           - Standard operating procedures
+           - General compliance requirements
+        3. High Impact:
+           - Mandatory security controls
+           - Required compliance measures
+           - Critical process requirements
+        4. Very High Impact:
+           - Critical security controls
+           - Key regulatory requirements
+           - Essential protection measures
+        5. Severe Impact:
+           - Fundamental security requirements
+           - Core compliance obligations
+           - Critical risk controls
+
         Return the analysis as a JSON array of rules, where each rule follows this structure:
         {
             "type": "requirement|approval|restriction",
-            "description": "detailed rule description",
+            "description": "detailed rule description with context and rationale",
             "conditions": {
-                "subject": "who or what this applies to",
-                "timing": "when this applies",
-                "prerequisites": "what must be true before"
+                "subject": "specific entities, roles, or resources affected",
+                "timing": "temporal conditions and frequency",
+                "prerequisites": "required conditions or states",
+                "exceptions": "valid exceptions to the rule"
             },
             "actions": {
-                "required_steps": ["list of required actions"],
-                "verification": "how to verify completion"
+                "required_steps": ["detailed list of required actions"],
+                "verification": "specific verification methods",
+                "documentation": "required documentation",
+                "monitoring": "ongoing monitoring requirements"
             },
-            "priority": 1-5
+            "priority": 1-5,
+            "compliance_categories": ["relevant compliance frameworks"],
+            "security_domains": ["affected security domains"]
         }"""
 
         response = client.chat.completions.create(
@@ -189,19 +226,38 @@ def create_compliance_rules(document: ComplianceDocument, rules: List[Dict]) -> 
         raise
 
 def process_document(document: ComplianceDocument, file_path: str) -> None:
-    """Process a document and extract compliance rules."""
+    """Process a document and extract compliance rules with progress tracking."""
     try:
-        # Extract text from PDF
+        # Update status to processing
+        document.status = 'processing'
+        db.session.commit()
+        logger.info(f"Started processing document: {document.filename}")
+        
+        # Step 1: Extract text from PDF (25%)
+        logger.info("Extracting text from PDF...")
         text = extract_pdf_text(file_path)
         document.content = text
+        document.status = 'processing_25'
+        db.session.commit()
         
-        # Process text and extract rules
+        # Step 2: Process text and extract rules (50%)
+        logger.info("Processing text and extracting rules...")
         processed_data = process_document_text(text)
         document.processed_content = text
-        document.status = 'processed'
+        document.status = 'processing_50'
+        db.session.commit()
         
-        # Create compliance rules
-        create_compliance_rules(document, processed_data['rules'])
+        # Step 3: Validate extracted rules (75%)
+        logger.info("Validating extracted rules...")
+        valid_rules = [rule for rule in processed_data['rules'] if validate_rule(rule)]
+        logger.info(f"Found {len(valid_rules)} valid rules out of {len(processed_data['rules'])} total rules")
+        document.status = 'processing_75'
+        db.session.commit()
+        
+        # Step 4: Create compliance rules (100%)
+        logger.info("Creating compliance rules...")
+        create_compliance_rules(document, valid_rules)
+        document.status = 'processed'
         
         db.session.commit()
         logger.info(f"Successfully processed document: {document.filename}")
