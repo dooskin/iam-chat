@@ -195,14 +195,16 @@ def settings():
 @app.route('/compliance')
 @login_required
 def compliance():
-    # Get compliance statistics
-    active_policies = CompliancePolicy.query.filter_by(status='active').count()
-    pending_reviews = ComplianceRecord.query.filter_by(status='pending_review').count()
+    stats = {
+        'total_documents': ComplianceDocument.query.count(),
+        'active_policies': CompliancePolicy.query.filter_by(status='active').count(),
+        'pending_reviews': ComplianceRecord.query.filter_by(status='pending_review').count()
+    }
     
     # Calculate compliance rate
     total_records = ComplianceRecord.query.count()
     compliant_records = ComplianceRecord.query.filter_by(status='compliant').count()
-    compliance_rate = round((compliant_records / total_records * 100) if total_records > 0 else 0)
+    stats['compliance_rate'] = round((compliant_records / total_records * 100) if total_records > 0 else 0)
     
     # Get documents and their processing status
     documents = ComplianceDocument.query.order_by(ComplianceDocument.upload_date.desc()).all()
@@ -212,9 +214,7 @@ def compliance():
     records = ComplianceRecord.query.order_by(ComplianceRecord.updated_at.desc()).limit(10).all()
     
     return render_template('compliance.html',
-                         active_policies_count=active_policies,
-                         pending_reviews_count=pending_reviews,
-                         compliance_rate=compliance_rate,
+                         stats=stats,
                          policies=policies,
                          documents=documents,
                          records=records)

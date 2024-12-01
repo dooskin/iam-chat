@@ -149,8 +149,7 @@ def process_document_text(text: str) -> Dict[str, List[Dict]]:
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Analyze this compliance document and extract structured rules:\n\n{text}"}
-            ],
-            response_format={"type": "json_object"}
+            ]
         )
         
         # Parse and validate the response

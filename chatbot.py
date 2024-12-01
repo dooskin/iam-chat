@@ -155,12 +155,11 @@ def process_chat_message(message: str, user) -> dict:
         - Business context and urgency level"""
 
         response = openai.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message}
-            ],
-            response_format={"type": "json_object"}
+            ]
         )
         
         content = response.choices[0].message.content
