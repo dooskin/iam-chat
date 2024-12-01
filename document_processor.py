@@ -1,37 +1,26 @@
 import os
-import spacy
-import magic
 import json
 import logging
 from typing import Dict, List, Optional
+from werkzeug.utils import secure_filename
 from pdfminer.high_level import extract_text
-import pytesseract
-from PIL import Image
-from models import ComplianceDocument, ComplianceRule
-from database import db
 from openai import OpenAI
+from database import db
+from models import ComplianceDocument, ComplianceRule, CompliancePolicy
 
-def validate_rule(rule: Dict) -> bool:
-    """Validate the structure and content of an extracted rule."""
+logger = logging.getLogger(__name__)
+
+def validate_rule(rule_data: Dict) -> bool:
+    """Validate extracted rule data structure."""
     try:
-        required_fields = ['type', 'description', 'conditions', 'actions', 'priority']
-        if not all(field in rule for field in required_fields):
+        required_fields = ['type', 'description', 'priority']
+        if not all(field in rule_data for field in required_fields):
             return False
             
-        # Validate rule type
-        if rule['type'] not in ['requirement', 'approval', 'restriction']:
+        if not isinstance(rule_data['priority'], (int, float)) or not (1 <= rule_data['priority'] <= 5):
             return False
             
-        # Validate priority
-        if not isinstance(rule['priority'], int) or not 1 <= rule['priority'] <= 5:
-            return False
-            
-        # Validate conditions
-        if not isinstance(rule['conditions'], dict) or 'subject' not in rule['conditions']:
-            return False
-            
-        # Validate actions
-        if not isinstance(rule['actions'], dict) or 'required_steps' not in rule['actions']:
+        if not isinstance(rule_data['description'], str) or len(rule_data['description']) < 10:
             return False
             
         return True
@@ -40,183 +29,109 @@ def validate_rule(rule: Dict) -> bool:
         logger.error(f"Error validating rule: {str(e)}")
         return False
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Initialize spacy with English model
-try:
-    nlp = spacy.load("en_core_web_sm")
-    logger.info("Successfully loaded spaCy English model")
-except OSError:
-    logger.error("Failed to load spaCy model. Please ensure it's installed correctly.")
-    nlp = None
-
-def is_valid_pdf(file_path: str) -> bool:
-    """Check if the file is a valid PDF using python-magic."""
-    mime = magic.Magic(mime=True)
-    file_type = mime.from_file(file_path)
-    return file_type == 'application/pdf'
-
 def extract_pdf_text(file_path: str) -> str:
-    """Extract text from PDF file."""
+    """Extract text content from a PDF file."""
     try:
-        if not is_valid_pdf(file_path):
-            raise ValueError("Invalid PDF file")
-        return extract_text(file_path)
+        text = extract_text(file_path)
+        if not text:
+            raise ValueError("No text content extracted from PDF")
+        return text
     except Exception as e:
         logger.error(f"Error extracting text from PDF: {str(e)}")
         raise
 
-def process_document_text(text: str) -> Dict[str, List[Dict]]:
+def process_document_text(text: str, max_retries: int = 3) -> Dict[str, List[Dict]]:
     """Process document text using OpenAI to extract structured rules and requirements."""
     try:
         client = OpenAI()
+        retry_count = 0
+        last_error = None
         
-        system_prompt = """You are an expert compliance analyst specializing in security and access control. 
-        Analyze this compliance document and extract detailed rules focusing on:
+        while retry_count < max_retries:
+            try:
+                system_prompt = """You are an expert compliance analyst specializing in security and access control. 
+                Analyze this compliance document and extract detailed rules focusing on:
+                1. Access control requirements
+                2. Security policies
+                3. Compliance requirements
+                4. Implementation guidelines
 
-        1. Security Requirements:
-           - Authentication and authorization controls
-           - Data protection measures
-           - System access restrictions
-           - Security monitoring requirements
+                Format each rule as:
+                {
+                    "type": "approval|restriction|requirement",
+                    "description": "Clear description of the rule",
+                    "priority": 1-5 (1: low, 5: critical),
+                    "conditions": {
+                        "subject": "affected resource or system",
+                        "timing": "when this applies",
+                        "prerequisites": "required conditions"
+                    },
+                    "actions": {
+                        "required_steps": ["step 1", "step 2"],
+                        "verification": "how to verify compliance"
+                    }
+                }
 
-        2. Access Control Rules:
-           - Role-based access control (RBAC) policies
-           - Privilege management
-           - Access review procedures
-           - Separation of duties requirements
+                Return the rules in a JSON array under a 'rules' key."""
 
-        3. Approval Workflows:
-           - Multi-level approval processes
-           - Emergency access procedures
-           - Access request handling
-           - Periodic review requirements
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": text}
+                    ],
+                    temperature=0.7
+                )
 
-        4. Compliance Requirements:
-           - Regulatory compliance measures (GDPR, SOX, HIPAA)
-           - Audit trail requirements
-           - Documentation standards
-           - Reporting obligations
+                content = response.choices[0].message.content
+                if not content:
+                    raise ValueError("Empty response from OpenAI")
 
-        Extract and categorize rules using these criteria:
-        Priority Levels:
-        1. Low Impact:
-           - General guidelines
-           - Best practices recommendations
-           - Optional enhancements
-        2. Moderate Impact:
-           - Recommended security practices
-           - Standard operating procedures
-           - General compliance requirements
-        3. High Impact:
-           - Mandatory security controls
-           - Required compliance measures
-           - Critical process requirements
-        4. Very High Impact:
-           - Critical security controls
-           - Key regulatory requirements
-           - Essential protection measures
-        5. Severe Impact:
-           - Fundamental security requirements
-           - Core compliance obligations
-           - Critical risk controls
+                # Parse and validate the response
+                data = json.loads(content)
+                if not isinstance(data, dict) or 'rules' not in data:
+                    raise ValueError("Invalid response format")
 
-        Return the analysis as a JSON array of rules, where each rule follows this structure:
-        {
-            "type": "requirement|approval|restriction",
-            "description": "detailed rule description with context and rationale",
-            "conditions": {
-                "subject": "specific entities, roles, or resources affected",
-                "timing": "temporal conditions and frequency",
-                "prerequisites": "required conditions or states",
-                "exceptions": "valid exceptions to the rule"
-            },
-            "actions": {
-                "required_steps": ["detailed list of required actions"],
-                "verification": "specific verification methods",
-                "documentation": "required documentation",
-                "monitoring": "ongoing monitoring requirements"
-            },
-            "priority": 1-5,
-            "compliance_categories": ["relevant compliance frameworks"],
-            "security_domains": ["affected security domains"]
-        }"""
+                rules = data['rules']
+                if not isinstance(rules, list):
+                    raise ValueError("Rules must be an array")
 
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Analyze this compliance document and extract structured rules:\n\n{text}"}
-            ]
-        )
-        
-        try:
-            content = response.choices[0].message.content
-            logger.debug(f"OpenAI raw response: {content}")
-            
-            result = json.loads(content)
-            logger.info("Successfully parsed OpenAI response")
-            
-            # Handle both array and object responses
-            rules = result if isinstance(result, list) else result.get('rules', [])
-            
-            # Ensure rules is always a list
-            if not isinstance(rules, list):
-                rules = [rules]
-            
-            # Validate each rule
-            validated_rules = []
-            for rule in rules:
-                if validate_rule(rule):
-                    validated_rules.append(rule)
-                    logger.info(f"Validated rule: {rule['type']} - {rule['description'][:50]}...")
-                else:
-                    logger.warning(f"Invalid rule format detected: {rule}")
-            
-            if not validated_rules:
-                logger.warning("No valid rules extracted from document")
-                return {'rules': []}
-            
-            logger.info(f"Successfully extracted {len(validated_rules)} valid rules")
-            return {'rules': validated_rules}
-            
-        except Exception as e:
-            logger.error(f"Error processing OpenAI response: {str(e)}")
+                validated_rules = [rule for rule in rules if validate_rule(rule)]
+                logger.info(f"Successfully extracted {len(validated_rules)} valid rules")
+                return {'rules': validated_rules}
+
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parsing error (attempt {retry_count + 1}): {str(e)}")
+                last_error = e
+                retry_count += 1
+                if retry_count < max_retries:
+                    logger.info(f"Retrying OpenAI request (attempt {retry_count + 1})")
+                    continue
+            except Exception as e:
+                logger.error(f"Error processing OpenAI response (attempt {retry_count + 1}): {str(e)}")
+                last_error = e
+                retry_count += 1
+                if retry_count < max_retries:
+                    logger.info(f"Retrying OpenAI request (attempt {retry_count + 1})")
+                    continue
+            break
+
+        if last_error:
+            logger.error(f"All retries failed. Last error: {str(last_error)}")
             return {'rules': []}
-            
+
     except Exception as e:
-        logger.error(f"Error processing document with OpenAI: {str(e)}")
-        # Fallback to basic rule extraction
-        return {'rules': [{
-            'type': 'requirement',
-            'description': "Document requires review - AI processing failed",
-            'conditions': {
-                'subject': 'document',
-                'timing': 'immediate',
-                'prerequisites': None
-            },
-            'actions': {
-                'required_steps': ['Manual review required'],
-                'verification': 'Document review completion'
-            },
-            'priority': 3
-        }]}
+        logger.error(f"Error in process_document_text: {str(e)}")
+        return {'rules': []}
 
 def create_compliance_rules(document: ComplianceDocument, rules: List[Dict]) -> None:
-    """Create ComplianceRule objects from extracted rules with enhanced validation."""
+    """Create ComplianceRule records from extracted rules."""
     try:
         for rule_data in rules:
-            if not validate_rule(rule_data):
-                logger.warning(f"Skipping invalid rule: {rule_data}")
-                continue
-                
-            # Ensure conditions and actions are properly formatted for database
             conditions = {
-                'subject': rule_data['conditions'].get('subject'),
-                'timing': rule_data['conditions'].get('timing'),
-                'prerequisites': rule_data['conditions'].get('prerequisites')
+                'subject': rule_data['conditions'].get('subject', ''),
+                'timing': rule_data['conditions'].get('timing', ''),
+                'prerequisites': rule_data['conditions'].get('prerequisites', '')
             }
             
             actions = {
@@ -240,6 +155,63 @@ def create_compliance_rules(document: ComplianceDocument, rules: List[Dict]) -> 
         db.session.rollback()
         logger.error(f"Error creating compliance rules: {str(e)}")
         raise
+
+def create_policy_from_rules(rules: List[Dict]) -> Optional[Dict]:
+    """Convert extracted rules into a compliance policy."""
+    try:
+        if not rules:
+            return None
+            
+        # Group rules by type and priority
+        high_priority_rules = [r for r in rules if r['priority'] >= 4]
+        other_rules = [r for r in rules if r['priority'] < 4]
+        
+        # Determine policy category based on rule content
+        categories = set()
+        for rule in rules:
+            if 'gdpr' in rule['description'].lower():
+                categories.add('GDPR')
+            if 'sox' in rule['description'].lower():
+                categories.add('SOX')
+            if 'hipaa' in rule['description'].lower():
+                categories.add('HIPAA')
+        
+        category = next(iter(categories)) if categories else 'General'
+        
+        # Create policy name and description
+        name = f"Auto-generated Policy - {category}"
+        description = "Automatically generated from document analysis\n\n"
+        
+        # Add high priority rules first
+        if high_priority_rules:
+            description += "Critical Requirements:\n"
+            for rule in high_priority_rules:
+                description += f"- {rule['description']}\n"
+        
+        # Add other rules
+        if other_rules:
+            description += "\nAdditional Requirements:\n"
+            for rule in other_rules:
+                description += f"- {rule['description']}\n"
+        
+        # Create requirements section
+        requirements = "Implementation Requirements:\n\n"
+        for rule in rules:
+            if 'actions' in rule and 'required_steps' in rule['actions']:
+                requirements += f"Priority {rule['priority']} - {rule['type']}:\n"
+                for step in rule['actions']['required_steps']:
+                    requirements += f"- {step}\n"
+        
+        return {
+            'name': name,
+            'category': category,
+            'description': description,
+            'requirements': requirements
+        }
+        
+    except Exception as e:
+        logger.error(f"Error creating policy from rules: {str(e)}")
+        return None
 
 def process_document(document: ComplianceDocument, file_path: str) -> None:
     """Process a document and extract compliance rules with progress tracking."""
@@ -270,11 +242,27 @@ def process_document(document: ComplianceDocument, file_path: str) -> None:
         document.status = 'processing_75'
         db.session.commit()
         
-        # Step 4: Create compliance rules (100%)
-        logger.info("Creating compliance rules...")
+        # Step 4: Create compliance rules and policy (100%)
+        logger.info("Creating compliance rules and policy...")
         create_compliance_rules(document, valid_rules)
-        document.status = 'processed'
         
+        # Generate and create policy from rules
+        policy_data = create_policy_from_rules(valid_rules)
+        if policy_data:
+            try:
+                policy = CompliancePolicy(
+                    name=policy_data['name'],
+                    category=policy_data['category'],
+                    description=policy_data['description'],
+                    requirements=policy_data['requirements'],
+                    status='active'
+                )
+                db.session.add(policy)
+                logger.info(f"Created new compliance policy: {policy_data['name']}")
+            except Exception as e:
+                logger.error(f"Error creating policy: {str(e)}")
+        
+        document.status = 'processed'
         db.session.commit()
         logger.info(f"Successfully processed document: {document.filename}")
         

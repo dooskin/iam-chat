@@ -322,26 +322,111 @@ document.addEventListener('DOMContentLoaded', function() {
     const uploadForm = document.querySelector('form[action*="upload_compliance_document"]');
     if (uploadForm) {
         uploadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
             const progressBar = document.getElementById('uploadProgress');
+            const progressBarInner = progressBar.querySelector('.progress-bar');
             progressBar.classList.remove('d-none');
-            progressBar.querySelector('.progress-bar').style.width = '0%';
-            progressBar.querySelector('.progress-bar').setAttribute('aria-valuenow', '0');
-            
-            // Start progress simulation
-            let progress = 0;
-            const interval = setInterval(function() {
-                if (progress < 90) {
-                    progress += 10;
-                    progressBar.querySelector('.progress-bar').style.width = progress + '%';
-                    progressBar.querySelector('.progress-bar').setAttribute('aria-valuenow', progress);
-                }
-            }, 1000);
+            progressBarInner.style.width = '0%';
+            progressBarInner.setAttribute('aria-valuenow', '0');
+            progressBarInner.textContent = 'Starting upload...';
 
-            // Store interval ID in form dataset for cleanup
-            uploadForm.dataset.progressInterval = interval;
+            const formData = new FormData(this);
+            
+            // Send the upload request
+            fetch(this.action, {
+                method: 'POST',
+                body: formData,
+                credentials: 'same-origin'
+            })
+            .then(response => {
+                if (!response.ok) throw new Error('Upload failed');
+                return response.text();
+            })
+            .then(() => {
+                // Start polling for document status
+                const filename = formData.get('document').name;
+                pollDocumentStatus(filename, progressBarInner);
+            })
+            .catch(error => {
+                console.error('Upload error:', error);
+                progressBarInner.style.width = '100%';
+                progressBarInner.classList.remove('bg-info', 'progress-bar-striped', 'progress-bar-animated');
+                progressBarInner.classList.add('bg-danger');
+                progressBarInner.textContent = 'Upload failed';
+                setTimeout(() => {
+                    progressBar.classList.add('d-none');
+                    location.reload();
+                }, 2000);
+            });
         });
     }
 });
+
+function pollDocumentStatus(filename, progressBar) {
+    const updateProgress = (status) => {
+        let progress = 0;
+        let text = '';
+        
+        switch(status) {
+            case 'pending':
+                progress = 10;
+                text = 'Preparing document...';
+                break;
+            case 'processing':
+                progress = 25;
+                text = 'Processing document...';
+                break;
+            case 'processing_25':
+                progress = 40;
+                text = 'Extracting text...';
+                break;
+            case 'processing_50':
+                progress = 60;
+                text = 'Analyzing content...';
+                break;
+            case 'processing_75':
+                progress = 80;
+                text = 'Creating rules...';
+                break;
+            case 'processed':
+                progress = 100;
+                text = 'Processing complete';
+                progressBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+                progressBar.classList.remove('bg-info');
+                progressBar.classList.add('bg-success');
+                setTimeout(() => location.reload(), 1500);
+                return;
+            case 'error':
+                progress = 100;
+                text = 'Processing failed';
+                progressBar.classList.remove('bg-info', 'progress-bar-striped', 'progress-bar-animated');
+                progressBar.classList.add('bg-danger');
+                setTimeout(() => location.reload(), 2000);
+                return;
+        }
+        
+        progressBar.style.width = progress + '%';
+        progressBar.setAttribute('aria-valuenow', progress);
+        progressBar.textContent = text;
+        
+        if (status !== 'processed' && status !== 'error') {
+            setTimeout(() => checkStatus(), 2000);
+        }
+    };
+
+    const checkStatus = () => {
+        fetch('/compliance/document/status/' + encodeURIComponent(filename))
+            .then(response => response.json())
+            .then(data => updateProgress(data.status))
+            .catch(error => {
+                console.error('Status check error:', error);
+                updateProgress('error');
+            });
+    };
+
+    // Start polling
+    checkStatus();
+}
 
 function viewPolicy(policyId) {
     window.location.href = `/compliance/policy/${policyId}`;

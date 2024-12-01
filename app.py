@@ -321,6 +321,19 @@ def view_policy(policy_id):
     return render_template('policy_detail.html', policy=policy, records=records)
 
 @app.route('/settings/update', methods=['POST'])
+@app.route('/compliance/document/status/<filename>')
+@login_required
+def get_document_status(filename):
+    """Get the processing status of a compliance document."""
+    try:
+        document = ComplianceDocument.query.filter_by(filename=filename).first()
+        if not document:
+            return jsonify({'status': 'error', 'message': 'Document not found'}), 404
+        return jsonify({'status': document.status})
+    except Exception as e:
+        logger.error(f"Error fetching document status: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @app.route('/compliance/document/<int:doc_id>/rules')
 @login_required
 def get_document_rules(doc_id):
