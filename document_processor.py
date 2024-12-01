@@ -152,23 +152,40 @@ def process_document_text(text: str) -> Dict[str, List[Dict]]:
             ]
         )
         
-        # Parse and validate the response
-        result = json.loads(response.choices[0].message.content)
-        
-        # Validate each rule
-        validated_rules = []
-        for rule in result.get('rules', []):
-            if validate_rule(rule):
-                validated_rules.append(rule)
-            else:
-                logger.warning(f"Invalid rule format detected: {rule}")
-        
-        if not validated_rules:
-            logger.warning("No valid rules extracted from document")
+        try:
+            content = response.choices[0].message.content
+            logger.debug(f"OpenAI raw response: {content}")
+            
+            result = json.loads(content)
+            logger.info("Successfully parsed OpenAI response")
+            
+            # Handle both array and object responses
+            rules = result if isinstance(result, list) else result.get('rules', [])
+            
+            # Ensure rules is always a list
+            if not isinstance(rules, list):
+                rules = [rules]
+            
+            # Validate each rule
+            validated_rules = []
+            for rule in rules:
+                if validate_rule(rule):
+                    validated_rules.append(rule)
+                    logger.info(f"Validated rule: {rule['type']} - {rule['description'][:50]}...")
+                else:
+                    logger.warning(f"Invalid rule format detected: {rule}")
+            
+            if not validated_rules:
+                logger.warning("No valid rules extracted from document")
+                return {'rules': []}
+            
+            logger.info(f"Successfully extracted {len(validated_rules)} valid rules")
+            return {'rules': validated_rules}
+            
+        except Exception as e:
+            logger.error(f"Error processing OpenAI response: {str(e)}")
             return {'rules': []}
             
-        return {'rules': validated_rules}
-        
     except Exception as e:
         logger.error(f"Error processing document with OpenAI: {str(e)}")
         # Fallback to basic rule extraction

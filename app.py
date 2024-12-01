@@ -247,29 +247,38 @@ def add_compliance_policy():
 @login_required
 def upload_compliance_document():
     if current_user.role != 'admin':
+        logger.warning(f"Non-admin user {current_user.username} attempted to upload document")
         flash('Permission denied', 'danger')
         return redirect(url_for('compliance'))
-        
+    
     if 'document' not in request.files:
+        logger.warning("Document upload attempted without file")
         flash('No document provided', 'danger')
         return redirect(url_for('compliance'))
-        
+    
     file = request.files['document']
-    if file.filename == '':
+    if not file or file.filename == '':
+        logger.warning("Empty file uploaded")
         flash('No selected file', 'danger')
         return redirect(url_for('compliance'))
-        
+    
     if not file.filename.lower().endswith('.pdf'):
+        logger.warning(f"Invalid file type attempted: {file.filename}")
         flash('Only PDF files are allowed', 'danger')
         return redirect(url_for('compliance'))
-        
+    
     try:
+        # Secure the filename and create upload directory
         filename = secure_filename(file.filename)
         upload_dir = os.path.join(app.instance_path, 'uploads')
         os.makedirs(upload_dir, exist_ok=True)
         file_path = os.path.join(upload_dir, filename)
-        file.save(file_path)
         
+        # Save the file
+        file.save(file_path)
+        logger.info(f"File saved successfully: {filename}")
+        
+        # Create document record
         document = ComplianceDocument(
             filename=filename,
             uploaded_by=current_user.id,
@@ -277,17 +286,30 @@ def upload_compliance_document():
         )
         db.session.add(document)
         db.session.commit()
+        logger.info(f"Created document record for {filename}")
         
-        # Process document in the background
         try:
+            # Process the document
             process_document(document, file_path)
-            flash('Document uploaded and processed successfully', 'success')
+            
+            # Check final status
+            db.session.refresh(document)
+            if document.status == 'processed':
+                logger.info(f"Document processed successfully: {filename}")
+                flash('Document processed successfully', 'success')
+            else:
+                logger.error(f"Document processing failed for {filename}, final status: {document.status}")
+                flash('Document processing failed', 'danger')
+                
         except Exception as e:
-            logger.error(f"Error processing document: {str(e)}")
-            flash('Error processing document', 'danger')
+            logger.error(f"Error processing document {filename}: {str(e)}")
+            document.status = 'error'
+            db.session.commit()
+            flash('Error processing document: Please check the file format and try again', 'danger')
             
     except Exception as e:
-        flash(f'Error uploading document: {str(e)}', 'danger')
+        logger.error(f"Error in document upload: {str(e)}")
+        flash('Error uploading document: Please try again', 'danger')
         
     return redirect(url_for('compliance'))
 
