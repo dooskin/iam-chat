@@ -8,7 +8,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from sqlalchemy.exc import SQLAlchemyError
 from chatbot import process_chat_message
 from database import db
-from models import User
+from models import User, CompliancePolicy, ComplianceRecord
 from policy_engine import evaluate_access_request
 
 # Set up logging
