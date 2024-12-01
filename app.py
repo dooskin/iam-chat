@@ -268,46 +268,39 @@ def upload_compliance_document():
         return redirect(url_for('compliance'))
     
     try:
-        # Secure the filename and create upload directory
         filename = secure_filename(file.filename)
         upload_dir = os.path.join(app.instance_path, 'uploads')
         os.makedirs(upload_dir, exist_ok=True)
         file_path = os.path.join(upload_dir, filename)
-        
-        # Save the file
         file.save(file_path)
-        logger.info(f"File saved successfully: {filename}")
         
-        # Create document record
         document = ComplianceDocument(
             filename=filename,
             uploaded_by=current_user.id,
             status='pending'
         )
         db.session.add(document)
+        db.session.flush()  # Ensure document has an ID before processing
+        
+        # Store document_id before processing
+        document_id = document.id
         db.session.commit()
-        logger.info(f"Created document record for {filename}")
         
         try:
-            # Process the document using document_id
-            process_document(document.id, file_path)
-            
-            # Check final status
-            db.session.refresh(document)
-            if document.status == 'processed':
-                logger.info(f"Document processed successfully: {filename}")
-                flash('Document processed successfully', 'success')
-            else:
-                logger.error(f"Document processing failed for {filename}, final status: {document.status}")
-                flash('Document processing failed', 'danger')
-                
+            # Process document using stored ID
+            process_document(document_id, file_path)
+            flash('Document processed successfully', 'success')
         except Exception as e:
             logger.error(f"Error processing document {filename}: {str(e)}")
-            document.status = 'error'
-            db.session.commit()
+            # Get fresh document instance
+            error_doc = ComplianceDocument.query.get(document_id)
+            if error_doc:
+                error_doc.status = 'error'
+                db.session.commit()
             flash('Error processing document: Please check the file format and try again', 'danger')
             
     except Exception as e:
+        db.session.rollback()
         logger.error(f"Error in document upload: {str(e)}")
         flash('Error uploading document: Please try again', 'danger')
         
