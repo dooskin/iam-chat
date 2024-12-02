@@ -629,6 +629,81 @@ def get_document_rules(doc_id: int):
     return jsonify({'rules': rules_data})
 
 @app.route('/api/chat', methods=['POST'])
+@app.route('/access-dashboard')
+@login_required
+def access_dashboard():
+    """Display the access patterns dashboard."""
+    return render_template('access_dashboard.html')
+
+@app.route('/api/access-patterns/resources')
+@login_required
+def get_resource_access_patterns():
+    """Get resource access distribution data."""
+    try:
+        with neo4j.GraphDatabase.driver(
+            os.environ.get('NEO4J_URI'),
+            auth=(os.environ.get('NEO4J_USER'), os.environ.get('NEO4J_PASSWORD'))
+        ) as driver:
+            with driver.session() as session:
+                result = session.run("""
+                    MATCH (a:Asset)
+                    WITH a.type as resource_type, count(*) as count
+                    RETURN collect(resource_type) as labels, collect(count) as values
+                """)
+                data = result.single()
+                return jsonify({
+                    'labels': data['labels'] if data else [],
+                    'values': data['values'] if data else []
+                })
+    except Exception as e:
+        logger.error(f"Error fetching resource access patterns: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/access-patterns/timeline')
+@login_required
+def get_access_timeline():
+    """Get access requests timeline data."""
+    try:
+        # Query the last 7 days of access requests
+        timeline_data = db.session.query(
+            func.date(ComplianceRecord.created_at).label('date'),
+            func.count().label('count')
+        ).group_by(func.date(ComplianceRecord.created_at))\
+         .order_by(func.date(ComplianceRecord.created_at))\
+         .limit(7)\
+         .all()
+        
+        return jsonify({
+            'labels': [str(record.date) for record in timeline_data],
+            'values': [record.count for record in timeline_data]
+        })
+    except Exception as e:
+        logger.error(f"Error fetching access timeline: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/access-patterns/iam-roles')
+@login_required
+def get_iam_roles_distribution():
+    """Get IAM roles distribution data."""
+    try:
+        with neo4j.GraphDatabase.driver(
+            os.environ.get('NEO4J_URI'),
+            auth=(os.environ.get('NEO4J_USER'), os.environ.get('NEO4J_PASSWORD'))
+        ) as driver:
+            with driver.session() as session:
+                result = session.run("""
+                    MATCH (p:IAMPolicy)
+                    WITH p.role as role, size(p.members) as member_count
+                    RETURN collect(role) as labels, collect(member_count) as values
+                """)
+                data = result.single()
+                return jsonify({
+                    'labels': data['labels'] if data else [],
+                    'values': data['values'] if data else []
+                })
+    except Exception as e:
+        logger.error(f"Error fetching IAM roles distribution: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 @login_required
 def chat():
     """Handle chat API requests with access control evaluation."""
