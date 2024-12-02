@@ -629,6 +629,36 @@ def get_document_rules(doc_id: int):
     return jsonify({'rules': rules_data})
 
 @app.route('/api/chat', methods=['POST'])
+@login_required
+def chat():
+    """Handle chat API requests with access control evaluation."""
+    if not request.is_json:
+        return jsonify({'error': 'Content-Type must be application/json'}), 400
+        
+    data = request.get_json()
+    if not data or 'message' not in data:
+        return jsonify({'error': 'No message provided'}), 400
+        
+    message = data['message']
+
+    try:
+        # Process message through chatbot
+        response = process_chat_message(message, current_user)
+        
+        # Evaluate access request if present
+        if 'access_request' in response:
+            access_decision = evaluate_access_request(
+                current_user.id,
+                response['access_request']['resource'],
+                response['access_request']['action']
+            )
+            response['access_decision'] = access_decision
+        
+        return jsonify(response)
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/access-dashboard')
 @login_required
 def access_dashboard():

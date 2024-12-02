@@ -59,6 +59,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const data = await response.json();
             
+            // Handle error responses
+            if (data.error) {
+                addMessage(data.error, 'error');
+                return;
+            }
+            
             // Add bot response to chat
             if (data.message) {
                 addMessage(data.message, 'bot');
@@ -66,11 +72,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Display access decision if present
             if (data.access_decision) {
-                displayAccessDecision(data.access_decision);
+                setTimeout(() => {
+                    displayAccessDecision(data.access_decision);
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }, 1000); // Delay to show after bot message
             }
 
         } catch (error) {
-            addMessage('Sorry, there was an error processing your request.', 'error');
+            console.error('Chat error:', error);
+            addMessage('Sorry, there was an error processing your request. Please try again.', 'error');
+        } finally {
+            // Re-enable input after processing
+            messageInput.disabled = false;
+            messageInput.focus();
         }
     });
 });
