@@ -358,13 +358,38 @@ h2 { font-size: var(--font-size-lg); }
 }
 
 .sidebar ul li a {
-    padding: 10px 20px;
+    padding: 12px 24px;
     font-size: 1.1em;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     color: var(--bs-light);
     text-decoration: none;
+    border-radius: 8px;
+    margin: 4px 12px;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.sidebar ul li a::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 4px;
+    height: 100%;
+    background: var(--bs-primary);
+    transform: scaleY(0);
+    transition: transform 0.3s ease;
+}
+
+.sidebar ul li a:hover::before {
+    transform: scaleY(1);
+}
+
+.sidebar ul li.active a::before {
+    transform: scaleY(1);
 }
 
 .sidebar ul li a:hover {
@@ -428,8 +453,49 @@ h2 { font-size: var(--font-size-lg); }
     margin-bottom: 120px;
 }
 
-/* Chat interface styling */
-/* Logo and brand styling */
+/* Enhanced Chat Interface */
+.chat-container {
+    background: linear-gradient(to bottom, var(--chat-bg), rgba(42, 45, 62, 0.95));
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    margin: 1.5rem auto;
+    padding: 1.5rem;
+}
+
+.chat-messages {
+    padding: 1.5rem;
+    margin: 0.5rem 0;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.chat-input-container {
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(8px);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-top: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.3s ease;
+}
+
+.chat-input-container:focus-within {
+    border-color: var(--bs-primary);
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+    transform: translateY(-2px);
+}
+
+/* Logo and Brand Enhancement */
+.navbar-brand {
+    font-weight: var(--font-weight-bold);
+    letter-spacing: 0.5px;
+    transition: all 0.3s ease;
+}
+
+.navbar-brand:hover {
+    transform: translateY(-1px);
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
 /* Message animations */
 @keyframes messageAppear {
     from {
@@ -528,9 +594,15 @@ h2 { font-size: var(--font-size-lg); }
 }
 /* Message styling */
 .message {
-    padding: 0.75rem;
-    margin-bottom: 0.5rem;
-    border-radius: 0.25rem;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+    border-radius: 16px;
+    font-size: 1rem;
+    line-height: 1.5;
+    letter-spacing: 0.3px;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
 }
 
 .message.system {
