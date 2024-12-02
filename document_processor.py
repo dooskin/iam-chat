@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 import time
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,8 +13,16 @@ from models import ComplianceDocument, ComplianceRule, CompliancePolicy
 
 logger = logging.getLogger(__name__)
 
-def validate_rule(rule_data: Dict) -> bool:
-    """Validate extracted rule data structure."""
+def validate_rule(rule_data: Dict[str, Any]) -> bool:
+    """
+    Validate the structure and content of an extracted rule.
+    
+    Args:
+        rule_data: Dictionary containing rule information
+        
+    Returns:
+        bool: True if rule is valid, False otherwise
+    """
     try:
         required_fields = ['type', 'description', 'priority']
         if not all(field in rule_data for field in required_fields):
@@ -33,7 +41,19 @@ def validate_rule(rule_data: Dict) -> bool:
         return False
 
 def extract_pdf_text(file_path: str) -> str:
-    """Extract text content from a PDF file."""
+    """
+    Extract text content from a PDF file.
+    
+    Args:
+        file_path: Path to the PDF file
+        
+    Returns:
+        str: Extracted text content
+        
+    Raises:
+        ValueError: If no text content could be extracted
+        Exception: For any other extraction errors
+    """
     try:
         text = extract_text(file_path)
         if not text:
@@ -43,93 +63,150 @@ def extract_pdf_text(file_path: str) -> str:
         logger.error(f"Error extracting text from PDF: {str(e)}")
         raise
 
-def process_document_text(text: str, max_retries: int = 3) -> Dict[str, List[Dict]]:
-    """Process document text using OpenAI to extract structured rules and requirements."""
-    try:
-        client = OpenAI()
-        retry_count = 0
-        last_error = None
+def get_openai_client() -> OpenAI:
+    """
+    Initialize and return OpenAI client instance.
+    
+    Returns:
+        OpenAI: Configured OpenAI client
+    """
+    return OpenAI()
+
+def create_system_prompt() -> str:
+    """
+    Create the system prompt for compliance analysis.
+    
+    Returns:
+        str: Formatted system prompt
+    """
+    return """You are an expert compliance analyst specializing in security and access control. 
+    Analyze this compliance document and extract detailed rules focusing on:
+    1. Access control requirements
+    2. Security policies
+    3. Compliance requirements
+    4. Implementation guidelines
+
+    Format each rule as:
+    {
+        "type": "approval|restriction|requirement",
+        "description": "Clear description of the rule",
+        "priority": 1-5 (1: low, 5: critical),
+        "conditions": {
+            "subject": "affected resource or system",
+            "timing": "when this applies",
+            "prerequisites": "required conditions"
+        },
+        "actions": {
+            "required_steps": ["step 1", "step 2"],
+            "verification": "how to verify compliance"
+        }
+    }
+
+    Return the rules in a JSON array under a 'rules' key."""
+
+def make_openai_request(client: OpenAI, text: str) -> Dict[str, Any]:
+    """
+    Make a request to OpenAI API for document analysis.
+    
+    Args:
+        client: OpenAI client instance
+        text: Document text to analyze
         
-        while retry_count < max_retries:
-            try:
-                system_prompt = """You are an expert compliance analyst specializing in security and access control. 
-                Analyze this compliance document and extract detailed rules focusing on:
-                1. Access control requirements
-                2. Security policies
-                3. Compliance requirements
-                4. Implementation guidelines
+    Returns:
+        Dict[str, Any]: Parsed response from OpenAI
+        
+    Raises:
+        ValueError: If response is empty or invalid
+        json.JSONDecodeError: If response parsing fails
+    """
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": create_system_prompt()},
+            {"role": "user", "content": text}
+        ],
+        temperature=0.7
+    )
 
-                Format each rule as:
-                {
-                    "type": "approval|restriction|requirement",
-                    "description": "Clear description of the rule",
-                    "priority": 1-5 (1: low, 5: critical),
-                    "conditions": {
-                        "subject": "affected resource or system",
-                        "timing": "when this applies",
-                        "prerequisites": "required conditions"
-                    },
-                    "actions": {
-                        "required_steps": ["step 1", "step 2"],
-                        "verification": "how to verify compliance"
-                    }
-                }
+    content = response.choices[0].message.content
+    if not content:
+        raise ValueError("Empty response from OpenAI")
 
-                Return the rules in a JSON array under a 'rules' key."""
+    return json.loads(content)
 
-                response = client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": text}
-                    ],
-                    temperature=0.7
-                )
+def validate_openai_response(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Validate the structure and content of OpenAI API response.
+    
+    Args:
+        data: Parsed response data from OpenAI
+        
+    Returns:
+        List[Dict[str, Any]]: List of validated rules
+        
+    Raises:
+        ValueError: If response format is invalid
+    """
+    if not isinstance(data, dict) or 'rules' not in data:
+        raise ValueError("Invalid response format")
 
-                content = response.choices[0].message.content
-                if not content:
-                    raise ValueError("Empty response from OpenAI")
+    rules = data['rules']
+    if not isinstance(rules, list):
+        raise ValueError("Rules must be an array")
 
-                # Parse and validate the response
-                data = json.loads(content)
-                if not isinstance(data, dict) or 'rules' not in data:
-                    raise ValueError("Invalid response format")
+    validated_rules = [rule for rule in rules if validate_rule(rule)]
+    logger.info(f"Successfully extracted {len(validated_rules)} valid rules")
+    return validated_rules
 
-                rules = data['rules']
-                if not isinstance(rules, list):
-                    raise ValueError("Rules must be an array")
+def process_document_text(text: str, max_retries: int = 3) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Process document text using OpenAI to extract structured rules and requirements.
+    
+    Args:
+        text: Document text to process
+        max_retries: Maximum number of retry attempts
+        
+    Returns:
+        Dict[str, List[Dict[str, Any]]]: Dictionary containing extracted rules
+    """
+    client = get_openai_client()
+    retry_count = 0
+    last_error = None
 
-                validated_rules = [rule for rule in rules if validate_rule(rule)]
-                logger.info(f"Successfully extracted {len(validated_rules)} valid rules")
-                return {'rules': validated_rules}
+    while retry_count < max_retries:
+        try:
+            response_data = make_openai_request(client, text)
+            validated_rules = validate_openai_response(response_data)
+            return {'rules': validated_rules}
 
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parsing error (attempt {retry_count + 1}): {str(e)}")
-                last_error = e
-                retry_count += 1
-                if retry_count < max_retries:
-                    logger.info(f"Retrying OpenAI request (attempt {retry_count + 1})")
-                    continue
-            except Exception as e:
-                logger.error(f"Error processing OpenAI response (attempt {retry_count + 1}): {str(e)}")
-                last_error = e
-                retry_count += 1
-                if retry_count < max_retries:
-                    logger.info(f"Retrying OpenAI request (attempt {retry_count + 1})")
-                    continue
-            break
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error (attempt {retry_count + 1}): {str(e)}")
+            last_error = e
+        except Exception as e:
+            logger.error(f"Error processing OpenAI response (attempt {retry_count + 1}): {str(e)}")
+            last_error = e
 
-        if last_error:
-            logger.error(f"All retries failed. Last error: {str(last_error)}")
-            return {'rules': []}
+        retry_count += 1
+        if retry_count < max_retries:
+            logger.info(f"Retrying OpenAI request (attempt {retry_count + 1})")
+            time.sleep(1)  # Add delay between retries
+        
+    logger.error(f"All retries failed. Last error: {str(last_error)}")
+    return {'rules': []}
 
-    except Exception as e:
-        logger.error(f"Error in process_document_text: {str(e)}")
-        return {'rules': []}
-
-def create_compliance_rules(document: ComplianceDocument, rules: List[Dict]) -> None:
-    """Create ComplianceRule records from extracted rules."""
+def create_compliance_rules(document: ComplianceDocument, rules: List[Dict[str, Any]]) -> None:
+    """
+    Create ComplianceRule records from extracted rules.
+    
+    Args:
+        document: ComplianceDocument instance
+        rules: List of validated rules to create
+        
+    Raises:
+        SQLAlchemyError: If database operations fail
+    """
     try:
+        rule_objects = []
         for rule_data in rules:
             conditions = {
                 'subject': rule_data['conditions'].get('subject', ''),
@@ -150,8 +227,10 @@ def create_compliance_rules(document: ComplianceDocument, rules: List[Dict]) -> 
                 actions=actions,
                 priority=rule_data['priority']
             )
-            db.session.add(rule)
+            rule_objects.append(rule)
             
+        # Use bulk insert for better performance
+        db.session.bulk_save_objects(rule_objects)
         db.session.commit()
         logger.info(f"Successfully created {len(rules)} compliance rules for document {document.id}")
     except Exception as e:
