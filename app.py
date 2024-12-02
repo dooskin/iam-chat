@@ -628,6 +628,59 @@ def get_document_rules(doc_id: int):
     
     return jsonify({'rules': rules_data})
 
+
+@app.route('/access-patterns')
+@login_required
+def access_patterns_dashboard():
+    """Display access patterns visualization dashboard."""
+    return render_template('access_patterns.html')
+
+@app.route('/api/access-patterns')
+@login_required
+def get_access_patterns():
+    """API endpoint to fetch access pattern statistics."""
+    try:
+        # Resource statistics
+        resource_stats = db.session.query(
+            AccessPattern.resource_name,
+            db.func.count(AccessPattern.id).label('count')
+        ).group_by(AccessPattern.resource_name).all()
+        
+        # Action type statistics
+        action_stats = db.session.query(
+            AccessPattern.action_type,
+            db.func.count(AccessPattern.id).label('count')
+        ).group_by(AccessPattern.action_type).all()
+        
+        # Timeline data (last 30 days)
+        timeline_data = db.session.query(
+            db.func.date(AccessPattern.access_time).label('date'),
+            db.func.count(AccessPattern.id).label('count')
+        ).group_by(
+            db.func.date(AccessPattern.access_time)
+        ).order_by(
+            db.func.date(AccessPattern.access_time).desc()
+        ).limit(30).all()
+        
+        return jsonify({
+            'resource_stats': [
+                {'resource_name': r.resource_name, 'count': r.count}
+                for r in resource_stats
+            ],
+            'action_stats': [
+                {'action_type': a.action_type, 'count': a.count}
+                for a in action_stats
+            ],
+            'timeline_data': [
+                {'date': str(t.date), 'count': t.count}
+                for t in timeline_data
+            ]
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching access patterns: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/chat', methods=['POST'])
 @login_required
 def chat():
