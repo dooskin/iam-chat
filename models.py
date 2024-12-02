@@ -95,16 +95,3 @@ class ComplianceRule(db.Model):
     conditions = db.Column(db.JSON)
     actions = db.Column(db.JSON)
     priority = db.Column(db.Integer)
-
-class AccessPattern(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    resource_name = db.Column(db.String(255), nullable=False)
-    action_type = db.Column(db.String(50), nullable=False)  # read, write, execute, admin
-    access_time = db.Column(db.DateTime, default=db.func.now())
-    success = db.Column(db.Boolean, nullable=False)
-    
-    user = db.relationship('User', backref=db.backref('access_patterns', lazy=True))
-    
-    def __repr__(self):
-        return f'<AccessPattern {self.user.username} - {self.resource_name}>'
