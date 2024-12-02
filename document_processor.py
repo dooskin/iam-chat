@@ -467,6 +467,36 @@ def process_document(document_id: int, file_path: str) -> None:
             logger.error(f"Error processing document {document_id}: {str(e)}")
             raise DocumentProcessingError(f"Document processing failed: {str(e)}") from e
 
+def validate_openai_response(response_data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Validate and process OpenAI API response.
+    
+    Args:
+        response_data: Raw response data from OpenAI
+        
+    Returns:
+        Dict[str, List[Dict[str, Any]]]: Validated rules dictionary
+        
+    Raises:
+        OpenAIProcessingError: If response validation fails
+    """
+    try:
+        if not isinstance(response_data, dict):
+            raise OpenAIProcessingError("Invalid response format: expected dictionary")
+            
+        rules = response_data.get('rules')
+        if not isinstance(rules, list):
+            raise OpenAIProcessingError("Invalid response format: 'rules' must be a list")
+            
+        validated_rules = [rule for rule in rules if validate_rule(rule)]
+        if not validated_rules:
+            logger.warning("No valid rules found in OpenAI response")
+            
+        return {'rules': validated_rules}
+        
+    except (TypeError, KeyError, json.JSONDecodeError) as e:
+        raise OpenAIProcessingError(f"Error validating OpenAI response: {str(e)}") from e
+
 @retry_on_error(max_retries=3)
 def process_document_text(text: str) -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -480,9 +510,15 @@ def process_document_text(text: str) -> Dict[str, List[Dict[str, Any]]]:
         
     Raises:
         OpenAIProcessingError: If processing fails
+        JSONDecodeError: If JSON parsing fails
     """
-    client = get_openai_client()
-    response_data = make_openai_request(client, text)
-    validated_rules = [rule for rule in response_data.get('rules', []) if validate_rule(rule)]
-    logger.info(f"Successfully extracted {len(validated_rules)} valid rules")
-    return {'rules': validated_rules}
+    try:
+        client = get_openai_client()
+        response_data = make_openai_request(client, text)
+        validated_response = validate_openai_response(response_data)
+        logger.info(f"Successfully extracted {len(validated_response['rules'])} valid rules")
+        return validated_response
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error in OpenAI response: {str(e)}")
+        raise OpenAIProcessingError(f"Failed to parse OpenAI response: {str(e)}") from e
