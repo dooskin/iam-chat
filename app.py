@@ -194,8 +194,178 @@ def update_user_role(user_id: int):
 @app.route('/integrations')
 @login_required
 def integrations():
-    """Display integrations page."""
-    return render_template('integrations.html')
+    """Display integrations page with GCP connection status."""
+    gcp_connected = False
+    iam_count = 0
+    asset_count = 0
+    
+    try:
+        with neo4j.GraphDatabase.driver(
+            os.environ.get('NEO4J_URI'),
+            auth=(os.environ.get('NEO4J_USER'), os.environ.get('NEO4J_PASSWORD'))
+        ) as driver:
+            with driver.session() as session:
+                result = session.run(
+                    "MATCH (u:User {id: $user_id}) RETURN u.credentials IS NOT NULL as connected",
+                    user_id=current_user.id
+                )
+                gcp_connected = result.single()["connected"] if result.peek() else False
+                
+                if gcp_connected:
+                    stats = session.run("""
+                        MATCH (i:IAMPolicy) RETURN count(i) as iam_count
+                        UNION ALL
+                        MATCH (a:Asset) RETURN count(a) as asset_count
+                    """)
+                    counts = [record[0] for record in stats]
+                    if len(counts) >= 2:
+                        iam_count, asset_count = counts[:2]
+    
+    except Exception as e:
+        logger.error(f"Error checking GCP connection status: {str(e)}")
+        flash("Error checking connection status", "danger")
+    
+    return render_template('integrations.html',
+                         gcp_connected=gcp_connected,
+                         iam_count=iam_count,
+                         asset_count=asset_count)
+
+@app.route('/google/auth')
+@login_required
+def google_auth():
+    """Initiate Google OAuth2.0 flow."""
+    try:
+        gcp = GCPConnector()
+        flow = gcp.create_oauth_flow(url_for('google_callback', _external=True))
+        authorization_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true'
+        )
+        session['state'] = state
+        return redirect(authorization_url)
+    except Exception as e:
+        logger.error(f"Error initiating Google auth: {str(e)}")
+        flash("Error connecting to Google Cloud", "danger")
+        return redirect(url_for('integrations'))
+
+@app.route('/google/callback')
+@login_required
+def google_callback():
+    """Handle Google OAuth2.0 callback."""
+    try:
+        state = session.get('state')
+        if not state:
+            raise ValueError("State not found in session")
+            
+        gcp = GCPConnector()
+        flow = gcp.create_oauth_flow(url_for('google_callback', _external=True))
+        flow.fetch_token(authorization_response=request.url)
+        
+        credentials = flow.credentials
+        gcp.store_credentials(
+            {
+                'token': credentials.token,
+                'refresh_token': credentials.refresh_token,
+                'token_uri': credentials.token_uri,
+                'client_id': credentials.client_id,
+                'client_secret': credentials.client_secret,
+                'scopes': credentials.scopes
+            },
+            current_user.id
+        )
+        
+        flash("Successfully connected to Google Cloud", "success")
+    except Exception as e:
+        logger.error(f"Error in Google auth callback: {str(e)}")
+        flash("Error completing Google Cloud connection", "danger")
+    
+    return redirect(url_for('integrations'))
+
+@app.route('/integrations/sync', methods=['POST'])
+@login_required
+def sync_gcp_data():
+    """Synchronize GCP IAM and Asset data."""
+    try:
+        gcp = GCPConnector()
+        with neo4j.GraphDatabase.driver(
+            os.environ.get('NEO4J_URI'),
+            auth=(os.environ.get('NEO4J_USER'), os.environ.get('NEO4J_PASSWORD'))
+        ) as driver:
+            with driver.session() as session:
+                # Get stored credentials
+                result = session.run(
+                    "MATCH (u:User {id: $user_id}) RETURN u.credentials as creds",
+                    user_id=current_user.id
+                )
+                creds_data = result.single()
+                if not creds_data or not creds_data["creds"]:
+                    return jsonify({"success": False, "error": "No credentials found"})
+                
+                # Create credentials object
+                credentials = Credentials(
+                    token=creds_data["creds"]["token"],
+                    refresh_token=creds_data["creds"]["refresh_token"],
+                    token_uri=creds_data["creds"]["token_uri"],
+                    client_id=creds_data["creds"]["client_id"],
+                    client_secret=creds_data["creds"]["client_secret"],
+                    scopes=creds_data["creds"]["scopes"]
+                )
+                
+                # Fetch and store IAM data
+                iam_data = gcp.get_iam_data(credentials)
+                if "error" not in iam_data:
+                    session.run("""
+                        MATCH (p:IAMPolicy) DETACH DELETE p
+                        WITH 1 as dummy
+                        UNWIND $policies as policy
+                        CREATE (p:IAMPolicy {
+                            role: policy.role,
+                            members: policy.members
+                        })
+                    """, policies=iam_data.get("bindings", []))
+                
+                # Fetch and store asset data
+                asset_data = gcp.get_asset_inventory(credentials)
+                if "error" not in asset_data:
+                    session.run("""
+                        MATCH (a:Asset) DETACH DELETE a
+                        WITH 1 as dummy
+                        UNWIND $assets as asset
+                        CREATE (a:Asset {
+                            name: asset.name,
+                            type: asset.type,
+                            resource: asset.resource
+                        })
+                    """, assets=asset_data.get("assets", []))
+                
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"Error syncing GCP data: {str(e)}")
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route('/integrations/disconnect', methods=['POST'])
+@login_required
+def disconnect_gcp():
+    """Disconnect GCP integration."""
+    try:
+        with neo4j.GraphDatabase.driver(
+            os.environ.get('NEO4J_URI'),
+            auth=(os.environ.get('NEO4J_USER'), os.environ.get('NEO4J_PASSWORD'))
+        ) as driver:
+            with driver.session() as session:
+                session.run(
+                    "MATCH (u:User {id: $user_id}) SET u.credentials = null",
+                    user_id=current_user.id
+                )
+                session.run("MATCH (p:IAMPolicy) DETACH DELETE p")
+                session.run("MATCH (a:Asset) DETACH DELETE a")
+        
+        flash("Successfully disconnected from Google Cloud", "success")
+    except Exception as e:
+        logger.error(f"Error disconnecting GCP: {str(e)}")
+        flash("Error disconnecting from Google Cloud", "danger")
+    
+    return redirect(url_for('integrations'))
 
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required

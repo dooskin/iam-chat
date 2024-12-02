@@ -1,43 +1,131 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="card">
+<div class="card mb-4">
     <div class="card-header">
         <h2>Google Cloud Integration</h2>
     </div>
     <div class="card-body">
-        <h5 class="card-title">Connect to Google Cloud Console</h5>
-        <p class="card-text">Follow these steps to integrate with Google Cloud:</p>
+        <h5 class="card-title">Connect to Google Cloud Platform</h5>
         
-        <ol class="list-group list-group-numbered mb-4">
-            <li class="list-group-item">Go to the <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer">Google Cloud Console</a></li>
-            <li class="list-group-item">Create a new project or select an existing one</li>
-            <li class="list-group-item">Enable the necessary APIs for your integration:
-                <ul>
-                    <li>Cloud Identity and Access Management (IAM) API</li>
-                    <li>Admin SDK API</li>
-                </ul>
-            </li>
-            <li class="list-group-item">Create a service account:
-                <ul>
-                    <li>Navigate to IAM & Admin > Service Accounts</li>
-                    <li>Click "Create Service Account"</li>
-                    <li>Grant necessary permissions (roles) to the service account</li>
-                    <li>Create and download the JSON key file</li>
-                </ul>
-            </li>
-            <li class="list-group-item">Configure your security settings and access controls in the Google Cloud Console</li>
-        </ol>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-3">Connection Status</h6>
+                        {% if gcp_connected %}
+                            <div class="alert alert-success">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-check-circle me-2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                                Connected to Google Cloud
+                            </div>
+                            <form action="{{ url_for('disconnect_gcp') }}" method="POST">
+                                <button type="submit" class="btn btn-danger">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-log-out me-2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                                    Disconnect
+                                </button>
+                            </form>
+                        {% else %}
+                            <div class="alert alert-warning">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-alert-circle me-2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                                Not connected
+                            </div>
+                            <a href="{{ url_for('google_auth') }}" class="btn btn-primary">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-log-in me-2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg>
+                                Connect with Google
+                            </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            {% if gcp_connected %}
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-3">Synchronized Data</h6>
+                        <ul class="list-group">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                IAM Policies
+                                <span class="badge bg-primary rounded-pill">{{ iam_count }}</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Cloud Assets
+                                <span class="badge bg-primary rounded-pill">{{ asset_count }}</span>
+                            </li>
+                        </ul>
+                        <button class="btn btn-secondary mt-3" id="syncButton">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-refresh-cw me-2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                            Sync Now
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="alert alert-info">
+            <h6 class="alert-heading">Required Permissions:</h6>
+            <ul class="mb-0">
+                <li>Cloud Asset Viewer</li>
+                <li>IAM Viewer</li>
+                <li>Security Reviewer</li>
+            </ul>
+        </div>
 
         <div class="alert alert-info">
             <h6 class="alert-heading">Security Best Practices:</h6>
             <ul class="mb-0">
                 <li>Always follow the principle of least privilege when assigning roles</li>
-                <li>Regularly rotate service account keys</li>
+                <li>Regularly review and update access permissions</li>
                 <li>Monitor service account usage through Cloud Audit Logs</li>
-                <li>Store credentials securely and never commit them to version control</li>
+                <li>Enable and review security alerts</li>
             </ul>
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const syncButton = document.getElementById('syncButton');
+    if (syncButton) {
+        syncButton.addEventListener('click', function() {
+            syncButton.disabled = true;
+            syncButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Syncing...';
+            
+            fetch('/integrations/sync', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('Sync failed: ' + data.error);
+                    syncButton.disabled = false;
+                    syncButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-refresh-cw me-2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>Sync Now';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred during sync');
+                syncButton.disabled = false;
+                syncButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-refresh-cw me-2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>Sync Now';
+            });
+        });
+    }
+});
+</script>
 {% endblock %}
