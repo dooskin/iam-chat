@@ -19,4 +19,7 @@ dependencies = [
     "spacy>=3.8.2",
     "pytesseract>=0.3.13",
     "python-magic>=0.4.27",
+    "google-api-python-client>=2.154.0",
+    "neo4j>=5.27.0",
+    "google-auth-oauthlib>=1.2.1",
 ]
