@@ -94,17 +94,9 @@
 }
 
 .sidebar .sidebar-header {
-    padding: 0.75rem 1.25rem;  /* Adjust padding */
+    padding: 20px;
     background: var(--bs-dark);
     border-bottom: 1px solid var(--bs-secondary);
-    display: flex;
-    align-items: center;
-    height: 56px;  /* Match navbar height */
-}
-
-.sidebar .sidebar-header h3 {
-    margin: 0;
-    font-size: 1.2rem;
 }
 
 .sidebar ul.components {
@@ -154,26 +146,14 @@
 
 #sidebarCollapse {
     position: fixed;
-    left: 0;
-    top: 56px;  /* Align with navbar */
+    left: 250px;
+    top: 70px;
     z-index: 999;
     transition: all 0.3s;
-    border-radius: 0;
-    height: 40px;
-    width: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.5rem;
-    margin: 0;  /* Remove margin */
-    background-color: var(--bs-dark);
-    border: none;
-    border-right: 1px solid var(--bs-secondary);
 }
 
-/* Remove the left position change when sidebar is active */
 #content.active #sidebarCollapse {
-    left: 0;
+    left: 15px;
 }
 
 /* Footer styles */
