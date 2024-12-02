@@ -238,7 +238,7 @@ def google_auth():
     """Initiate Google OAuth2.0 flow."""
     try:
         gcp = GCPConnector()
-        flow = gcp.create_oauth_flow('https://access-bot-ai-t020.id.repl.co/auth/google/callback')
+        flow = gcp.create_oauth_flow(url_for('google_callback', _external=True))
         authorization_url, state = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true'

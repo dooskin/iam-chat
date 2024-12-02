@@ -26,12 +26,48 @@ class GCPConnector:
         self.neo4j_uri = os.environ.get('NEO4J_URI')
         self.neo4j_user = os.environ.get('NEO4J_USER')
         self.neo4j_password = os.environ.get('NEO4J_PASSWORD')
-        
-        # Initialize Neo4j driver
-        self.neo4j_driver = neo4j.GraphDatabase.driver(
-            self.neo4j_uri,
-            auth=(self.neo4j_user, self.neo4j_password)
-        )
+        self._driver = None
+
+    @property
+    def neo4j_driver(self):
+        """Lazy initialization of Neo4j driver with connection testing."""
+        if self._driver is None:
+            try:
+                self._driver = neo4j.GraphDatabase.driver(
+                    self.neo4j_uri,
+                    auth=(self.neo4j_user, self.neo4j_password)
+                )
+                # Test the connection
+                with self._driver.session() as session:
+                    session.run("RETURN 1")
+                # Initialize schema
+                self._initialize_schema()
+            except Exception as e:
+                logger.error(f"Failed to initialize Neo4j connection: {str(e)}")
+                raise
+        return self._driver
+
+    def _initialize_schema(self):
+        """Initialize Neo4j database schema with constraints and indexes."""
+        with self.neo4j_driver.session() as session:
+            try:
+                # Create constraints
+                session.run("""
+                    CREATE CONSTRAINT user_id IF NOT EXISTS
+                    FOR (u:User) REQUIRE u.id IS UNIQUE
+                """)
+                session.run("""
+                    CREATE CONSTRAINT iam_policy_name IF NOT EXISTS
+                    FOR (p:IAMPolicy) REQUIRE p.name IS UNIQUE
+                """)
+                session.run("""
+                    CREATE CONSTRAINT asset_name IF NOT EXISTS
+                    FOR (a:Asset) REQUIRE a.name IS UNIQUE
+                """)
+                logger.info("Neo4j schema initialized successfully")
+            except Exception as e:
+                logger.error(f"Error initializing Neo4j schema: {str(e)}")
+                raise
 
     def create_oauth_flow(self, redirect_uri: str) -> Flow:
         """Create OAuth2.0 flow for Google authentication."""
@@ -42,6 +78,7 @@ class GCPConnector:
                     "client_secret": self.client_secret,
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [redirect_uri]
                 }
             },
             scopes=self.SCOPES,
@@ -51,8 +88,22 @@ class GCPConnector:
 
     def store_credentials(self, credentials: Dict[str, Any], user_id: int) -> None:
         """Store OAuth credentials in Neo4j."""
-        with self.neo4j_driver.session() as session:
-            session.execute_write(self._save_credentials, user_id, credentials)
+        try:
+            # Validate required credential fields
+            required_fields = ['token', 'refresh_token', 'token_uri', 'client_id', 'client_secret', 'scopes']
+            missing_fields = [field for field in required_fields if field not in credentials]
+            if missing_fields:
+                raise ValueError(f"Missing required credential fields: {', '.join(missing_fields)}")
+
+            with self.neo4j_driver.session() as session:
+                session.execute_write(self._save_credentials, user_id, credentials)
+                logger.info(f"Successfully stored credentials for user {user_id}")
+        except (neo4j.exceptions.ServiceUnavailable, neo4j.exceptions.AuthError) as e:
+            logger.error(f"Neo4j connection error: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Error storing credentials: {str(e)}")
+            raise
 
     def _save_credentials(self, tx, user_id: int, credentials: Dict[str, Any]) -> None:
         """Neo4j transaction to save credentials."""
