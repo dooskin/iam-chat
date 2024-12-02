@@ -146,12 +146,13 @@
 
 #sidebarCollapse {
     position: fixed;
-    left: 250px;
+    left: 0;
     top: 56px;
     z-index: 999;
     transition: all 0.3s;
     border-radius: 0;
     height: 40px;
+    width: 40px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -163,9 +164,9 @@
     border-right: 1px solid var(--bs-secondary);
 }
 
+/* Remove the left position change when sidebar is active */
 #content.active #sidebarCollapse {
     left: 0;
-    border-right: none;
 }
 
 /* Footer styles */
