@@ -21,12 +21,27 @@ class GCPConnector:
     ]
 
     def __init__(self):
+        # Validate Google OAuth credentials
         self.client_id = os.environ.get('GOOGLE_CLIENT_ID')
         self.client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
+        
+        if not self.client_id or not self.client_secret:
+            error_msg = "Missing required Google OAuth credentials"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        # Validate Neo4j credentials
         self.neo4j_uri = os.environ.get('NEO4J_URI')
         self.neo4j_user = os.environ.get('NEO4J_USER')
         self.neo4j_password = os.environ.get('NEO4J_PASSWORD')
+        
+        if not all([self.neo4j_uri, self.neo4j_user, self.neo4j_password]):
+            error_msg = "Missing required Neo4j credentials"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
         self._driver = None
+        logger.info("GCPConnector initialized successfully")
 
     @property
     def neo4j_driver(self):
@@ -69,22 +84,46 @@ class GCPConnector:
                 logger.error(f"Error initializing Neo4j schema: {str(e)}")
                 raise
 
-    def create_oauth_flow(self, redirect_uri: str) -> Flow:
-        """Create OAuth2.0 flow for Google authentication."""
-        flow = Flow.from_client_config(
-            {
-                "web": {
-                    "client_id": self.client_id,
-                    "client_secret": self.client_secret,
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [redirect_uri]
-                }
-            },
-            scopes=self.SCOPES,
-            redirect_uri=redirect_uri
-        )
-        return flow
+    def create_oauth_flow(self, redirect_uri: str = None) -> Flow:
+        """Create OAuth2.0 flow for Google authentication.
+        
+        Args:
+            redirect_uri: Optional override for redirect URI. If not provided,
+                        uses the hardcoded production callback URL.
+        
+        Returns:
+            Flow: Configured OAuth2.0 flow object
+            
+        Raises:
+            ValueError: If client credentials are invalid
+        """
+        try:
+            # Use hardcoded production callback URL unless overridden
+            callback_url = 'https://access-bot-ai-t020.id.repl.co/auth/google/callback'
+            if redirect_uri:
+                logger.warning(f"Overriding default callback URL with: {redirect_uri}")
+                callback_url = redirect_uri
+                
+            flow = Flow.from_client_config(
+                {
+                    "web": {
+                        "client_id": self.client_id,
+                        "client_secret": self.client_secret,
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "redirect_uris": [callback_url]
+                    }
+                },
+                scopes=self.SCOPES,
+                redirect_uri=callback_url
+            )
+            logger.info("OAuth2.0 flow created successfully")
+            return flow
+            
+        except Exception as e:
+            error_msg = f"Error creating OAuth flow: {str(e)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
     def store_credentials(self, credentials: Dict[str, Any], user_id: int) -> None:
         """Store OAuth credentials in Neo4j."""

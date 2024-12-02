@@ -238,16 +238,27 @@ def google_auth():
     """Initiate Google OAuth2.0 flow."""
     try:
         gcp = GCPConnector()
-        flow = gcp.create_oauth_flow(url_for('google_callback', _external=True))
+        flow = gcp.create_oauth_flow()  # Use default production callback URL
+        
         authorization_url, state = flow.authorization_url(
             access_type='offline',
-            include_granted_scopes='true'
+            include_granted_scopes='true',
+            prompt='consent'  # Always show consent screen to ensure refresh token
         )
         session['state'] = state
+        logger.info(f"Initiating OAuth flow for user {current_user.username}")
         return redirect(authorization_url)
+        
+    except ValueError as e:
+        # Handle configuration errors
+        logger.error(f"OAuth configuration error: {str(e)}")
+        flash("Invalid Google Cloud configuration. Please contact administrator.", "danger")
+        return redirect(url_for('integrations'))
+        
     except Exception as e:
-        logger.error(f"Error initiating Google auth: {str(e)}")
-        flash("Error connecting to Google Cloud", "danger")
+        # Handle other unexpected errors
+        logger.error(f"Unexpected error initiating Google auth: {str(e)}")
+        flash("An unexpected error occurred while connecting to Google Cloud", "danger")
         return redirect(url_for('integrations'))
 
 @app.route('/google/callback')
@@ -255,31 +266,52 @@ def google_auth():
 def google_callback():
     """Handle Google OAuth2.0 callback."""
     try:
+        # Verify state token to prevent CSRF
         state = session.get('state')
         if not state:
-            raise ValueError("State not found in session")
+            logger.error("OAuth state token missing from session")
+            flash("Invalid authentication state. Please try again.", "danger")
+            return redirect(url_for('integrations'))
             
         gcp = GCPConnector()
-        flow = gcp.create_oauth_flow(url_for('google_callback', _external=True))
-        flow.fetch_token(authorization_response=request.url)
+        flow = gcp.create_oauth_flow()  # Use default production callback URL
+        
+        try:
+            flow.fetch_token(authorization_response=request.url)
+        except Exception as e:
+            logger.error(f"Error fetching OAuth token: {str(e)}")
+            flash("Failed to complete authentication. Please try again.", "danger")
+            return redirect(url_for('integrations'))
         
         credentials = flow.credentials
-        gcp.store_credentials(
-            {
-                'token': credentials.token,
-                'refresh_token': credentials.refresh_token,
-                'token_uri': credentials.token_uri,
-                'client_id': credentials.client_id,
-                'client_secret': credentials.client_secret,
-                'scopes': credentials.scopes
-            },
-            current_user.id
-        )
-        
-        flash("Successfully connected to Google Cloud", "success")
+        if not credentials.refresh_token:
+            logger.error("No refresh token received in OAuth response")
+            flash("Failed to obtain required permissions. Please try again.", "danger")
+            return redirect(url_for('integrations'))
+            
+        # Store credentials in Neo4j
+        try:
+            gcp.store_credentials(
+                {
+                    'token': credentials.token,
+                    'refresh_token': credentials.refresh_token,
+                    'token_uri': credentials.token_uri,
+                    'client_id': credentials.client_id,
+                    'client_secret': credentials.client_secret,
+                    'scopes': credentials.scopes
+                },
+                current_user.id
+            )
+            logger.info(f"Successfully stored GCP credentials for user {current_user.username}")
+            flash("Successfully connected to Google Cloud", "success")
+            
+        except Exception as e:
+            logger.error(f"Error storing credentials: {str(e)}")
+            flash("Failed to save connection details. Please try again.", "danger")
+            
     except Exception as e:
-        logger.error(f"Error in Google auth callback: {str(e)}")
-        flash("Error completing Google Cloud connection", "danger")
+        logger.error(f"Unexpected error in Google auth callback: {str(e)}")
+        flash("An unexpected error occurred. Please try again.", "danger")
     
     return redirect(url_for('integrations'))
 
