@@ -92,33 +92,69 @@ class GCPConnector:
         return self._driver
 
     def _initialize_schema(self):
-        """Initialize Neo4j database schema with constraints and indexes."""
-        with self.neo4j_driver.session() as session:
-            try:
-                # Create constraints
-                session.run("""
-                    CREATE CONSTRAINT user_id IF NOT EXISTS
-                    FOR (u:User) REQUIRE u.id IS UNIQUE
-                """)
-                session.run("""
-                    CREATE CONSTRAINT iam_policy_name IF NOT EXISTS
-                    FOR (p:IAMPolicy) REQUIRE p.name IS UNIQUE
-                """)
-                session.run("""
-                    CREATE CONSTRAINT asset_name IF NOT EXISTS
-                    FOR (a:Asset) REQUIRE a.name IS UNIQUE
-                """)
-                logger.info("Neo4j schema initialized successfully")
-            except Exception as e:
-                logger.error(f"Error initializing Neo4j schema: {str(e)}")
-                raise
+        """Initialize Neo4j database schema with constraints and indexes with retry logic."""
+        max_retries = 3
+        base_delay = 1  # Base delay in seconds
+        retry_count = 0
+        last_error = None
 
-    def create_oauth_flow(self, redirect_uri: str = None) -> Flow:
+        while retry_count < max_retries:
+            try:
+                with self.neo4j_driver.session() as session:
+                    # Test database connectivity first
+                    session.run("RETURN 1")
+
+                    # Create constraints with proper error handling
+                    constraints = [
+                        ("user_id", "User", "id"),
+                        ("iam_policy_name", "IAMPolicy", "name"),
+                        ("asset_name", "Asset", "name")
+                    ]
+
+                    for constraint_name, label, property_name in constraints:
+                        try:
+                            session.run(f"""
+                                CREATE CONSTRAINT {constraint_name} IF NOT EXISTS
+                                FOR (n:{label}) REQUIRE n.{property_name} IS UNIQUE
+                            """)
+                            logger.info(f"Successfully created/verified constraint: {constraint_name}")
+                        except Exception as e:
+                            error_msg = f"Error creating constraint {constraint_name}: {str(e)}"
+                            logger.error(error_msg)
+                            raise ValueError(error_msg)
+
+                    # Verify constraints were created
+                    result = session.run("SHOW CONSTRAINTS")
+                    constraints_list = [record["name"] for record in result]
+                    logger.info(f"Active constraints: {', '.join(constraints_list)}")
+                    
+                    logger.info("Neo4j schema initialization completed successfully")
+                    return  # Success, exit the retry loop
+                    
+            except (neo4j.exceptions.ServiceUnavailable, neo4j.exceptions.DatabaseError) as e:
+                retry_count += 1
+                last_error = str(e)
+                
+                if retry_count == max_retries:
+                    error_msg = f"Failed to initialize Neo4j schema after {max_retries} attempts. Last error: {last_error}"
+                    logger.error(error_msg)
+                    raise ConnectionError(error_msg)
+                
+                delay = base_delay * (2 ** (retry_count - 1))  # Exponential backoff
+                logger.warning(f"Schema initialization attempt {retry_count} failed, retrying in {delay} seconds...")
+                time.sleep(delay)
+                
+            except Exception as e:
+                error_msg = f"Unexpected error during schema initialization: {str(e)}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+    def create_oauth_flow(self, request_host: str = None) -> Flow:
         """Create OAuth2.0 flow for Google authentication with enhanced validation.
         
         Args:
-            redirect_uri: Optional override for redirect URI. If not provided,
-                        uses the configured callback URL from environment.
+            request_host: The host of the current request, used for dynamic callback URL.
+                        Should include protocol (http/https).
         
         Returns:
             Flow: Configured OAuth2.0 flow object
@@ -130,17 +166,28 @@ class GCPConnector:
         try:
             # Validate OAuth credentials
             if not self.client_id or len(self.client_id) < 20:
-                raise ValueError("Invalid Google client ID format")
+                error_msg = "Invalid Google client ID format or missing client ID"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
             if not self.client_secret or len(self.client_secret) < 10:
-                raise ValueError("Invalid Google client secret format")
+                error_msg = "Invalid Google client secret format or missing client secret"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
-            # Get callback URL with validation
-            callback_url = os.environ.get('OAUTH_CALLBACK_URL', 'https://access-bot-ai-t020.id.repl.co/auth/google/callback')
-            if redirect_uri:
-                if not redirect_uri.startswith(('http://', 'https://')):
-                    raise ValueError("Invalid redirect URI format - must be HTTPS or HTTP")
-                logger.warning(f"Overriding default callback URL with: {redirect_uri}")
-                callback_url = redirect_uri
+            # Build dynamic callback URL
+            if not request_host:
+                error_msg = "Request host is required for dynamic callback URL"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+            if not request_host.startswith(('http://', 'https://')):
+                error_msg = "Invalid request host format - must include protocol (http:// or https://)"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+            callback_url = f"{request_host}/auth/google/callback"
+            logger.info(f"Using dynamic callback URL: {callback_url}")
 
             # Validate scopes
             if not isinstance(self.SCOPES, list) or not all(isinstance(s, str) for s in self.SCOPES):
