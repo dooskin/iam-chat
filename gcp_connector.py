@@ -140,7 +140,7 @@ class GCPConnector:
         return self._driver
 
     def _initialize_schema(self):
-        """Initialize Neo4j database schema with constraints and indexes with retry logic."""
+        """Initialize Neo4j database schema with enhanced User node support and proper constraints."""
         max_retries = 3
         base_delay = 1  # Base delay in seconds
         retry_count = 0
@@ -149,37 +149,97 @@ class GCPConnector:
         while retry_count < max_retries:
             try:
                 with self.neo4j_driver.session() as session:
-                    # Test database connectivity first
-                    session.run("RETURN 1")
+                    # Verify database connectivity with timeout
+                    session.run("RETURN 1", timeout=5)
 
-                    # Create constraints with proper error handling
-                    constraints = [
-                        ("user_id", "User", "id"),
-                        ("iam_policy_name", "IAMPolicy", "name"),
-                        ("asset_name", "Asset", "name")
+                    # Define schema components
+                    schema_components = [
+                        # Node labels and their required properties
+                        {
+                            "label": "User",
+                            "properties": {
+                                "id": "INTEGER",
+                                "credentials": "MAP",  # Store OAuth credentials as a map
+                                "email": "STRING",
+                                "created_at": "DATETIME"
+                            },
+                            "unique": ["id"]  # Properties that should have uniqueness constraints
+                        },
+                        {
+                            "label": "IAMPolicy",
+                            "properties": {
+                                "name": "STRING",
+                                "role": "STRING",
+                                "created_at": "DATETIME"
+                            },
+                            "unique": ["name"]
+                        },
+                        {
+                            "label": "Asset",
+                            "properties": {
+                                "name": "STRING",
+                                "type": "STRING",
+                                "created_at": "DATETIME"
+                            },
+                            "unique": ["name"]
+                        }
                     ]
 
-                    for constraint_name, label, property_name in constraints:
-                        try:
-                            session.run(f"""
-                                CREATE CONSTRAINT {constraint_name} IF NOT EXISTS
-                                FOR (n:{label}) REQUIRE n.{property_name} IS UNIQUE
-                            """)
-                            logger.info(f"Successfully created/verified constraint: {constraint_name}")
-                        except Exception as e:
-                            error_msg = f"Error creating constraint {constraint_name}: {str(e)}"
-                            logger.error(error_msg)
-                            raise ValueError(error_msg)
+                    # Create or update schema for each component
+                    for component in schema_components:
+                        label = component["label"]
+                        
+                        # Create constraints for unique properties
+                        for prop in component["unique"]:
+                            constraint_name = f"{label.lower()}_{prop}_unique"
+                            try:
+                                # Drop existing constraint if it exists (to handle schema changes)
+                                session.run(f"""
+                                    DROP CONSTRAINT {constraint_name} IF EXISTS
+                                """)
+                                
+                                # Create new constraint
+                                session.run(f"""
+                                    CREATE CONSTRAINT {constraint_name} IF NOT EXISTS
+                                    FOR (n:{label})
+                                    REQUIRE n.{prop} IS UNIQUE
+                                """)
+                                logger.info(f"Created/updated constraint: {constraint_name}")
+                            except Exception as e:
+                                error_msg = f"Error managing constraint {constraint_name}: {str(e)}"
+                                logger.error(error_msg)
+                                raise ValueError(error_msg)
 
-                    # Verify constraints were created
-                    result = session.run("SHOW CONSTRAINTS")
-                    constraints_list = [record["name"] for record in result]
-                    logger.info(f"Active constraints: {', '.join(constraints_list)}")
+                        # Create indexes for non-unique properties that need fast lookup
+                        for prop, prop_type in component["properties"].items():
+                            if prop not in component["unique"]:
+                                index_name = f"{label.lower()}_{prop}_idx"
+                                try:
+                                    session.run(f"""
+                                        CREATE INDEX {index_name} IF NOT EXISTS
+                                        FOR (n:{label})
+                                        ON (n.{prop})
+                                    """)
+                                    logger.info(f"Created/verified index: {index_name}")
+                                except Exception as e:
+                                    error_msg = f"Error creating index {index_name}: {str(e)}"
+                                    logger.error(error_msg)
+                                    raise ValueError(error_msg)
+
+                    # Verify schema setup
+                    constraints = session.run("SHOW CONSTRAINTS").data()
+                    indexes = session.run("SHOW INDEXES").data()
                     
+                    logger.info(f"Active constraints: {len(constraints)}")
+                    logger.info(f"Active indexes: {len(indexes)}")
+                    
+                    # Schema initialization complete
                     logger.info("Neo4j schema initialization completed successfully")
                     return  # Success, exit the retry loop
                     
-            except (neo4j.exceptions.ServiceUnavailable, neo4j.exceptions.DatabaseError) as e:
+            except (neo4j.exceptions.ServiceUnavailable, 
+                   neo4j.exceptions.DatabaseError,
+                   neo4j.exceptions.TransientError) as e:
                 retry_count += 1
                 last_error = str(e)
                 
@@ -188,8 +248,10 @@ class GCPConnector:
                     logger.error(error_msg)
                     raise ConnectionError(error_msg)
                 
-                delay = base_delay * (2 ** (retry_count - 1))  # Exponential backoff
-                logger.warning(f"Schema initialization attempt {retry_count} failed, retrying in {delay} seconds...")
+                # Calculate delay with jitter
+                max_delay = base_delay * (2 ** (retry_count - 1))
+                delay = max_delay + random.uniform(0, 1)
+                logger.warning(f"Schema initialization attempt {retry_count} failed, retrying in {delay:.2f} seconds...")
                 time.sleep(delay)
                 
             except Exception as e:
@@ -212,14 +274,14 @@ class GCPConnector:
             ConnectionError: If unable to validate credentials
         """
         try:
-            # Enhanced credential validation
+            # Enhanced credential validation with detailed checks
             if not self.client_id or not isinstance(self.client_id, str):
                 error_msg = "Invalid Google client ID: must be a non-empty string"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
                 
-            if len(self.client_id) < 20 or not self.client_id.endswith('.apps.googleusercontent.com'):
-                error_msg = "Invalid Google client ID format: must be valid OAuth 2.0 client ID"
+            if not self.client_id.endswith('.apps.googleusercontent.com'):
+                error_msg = "Invalid Google client ID format: must be a valid OAuth 2.0 client ID ending with .apps.googleusercontent.com"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
                 
@@ -228,37 +290,40 @@ class GCPConnector:
                 logger.error(error_msg)
                 raise ValueError(error_msg)
                 
-            if len(self.client_secret) < 10:
-                error_msg = "Invalid Google client secret: insufficient length"
+            if len(self.client_secret) < 24:  # Google client secrets are typically longer
+                error_msg = "Invalid Google client secret: insufficient length for OAuth 2.0 client secret"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
 
-            # Build and validate dynamic callback URL
+            # Build and validate dynamic callback URL with enhanced security
             if not request_host:
-                error_msg = "Request host is required for dynamic callback URL"
+                error_msg = "Request host is required for dynamic callback URL configuration"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
                 
             if not isinstance(request_host, str):
-                error_msg = "Request host must be a string"
+                error_msg = "Request host must be a string value"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
                 
             if not request_host.startswith(('http://', 'https://')):
-                error_msg = "Invalid request host format - must include protocol (http:// or https://)"
+                error_msg = "Invalid request host format - must include valid protocol (http:// or https://)"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
 
-            # Normalize and validate callback URL
-            callback_path = '/auth/google/callback'
+            # Normalize and validate callback URL with strict formatting
+            callback_path = '/google/callback'  # Updated to match the route in app.py
             callback_url = request_host.rstrip('/') + callback_path
             
-            # Validate URL format
+            # Strict URL validation
             try:
-                from urllib.parse import urlparse
                 parsed_url = urlparse(callback_url)
-                if not all([parsed_url.scheme, parsed_url.netloc]):
-                    raise ValueError("Invalid URL format")
+                if not all([
+                    parsed_url.scheme in ('http', 'https'),
+                    parsed_url.netloc,
+                    parsed_url.path == callback_path
+                ]):
+                    raise ValueError("Invalid callback URL structure")
             except Exception as e:
                 error_msg = f"Invalid callback URL format: {str(e)}"
                 logger.error(error_msg)
@@ -266,43 +331,54 @@ class GCPConnector:
                 
             logger.info(f"Using validated callback URL: {callback_url}")
 
-            # Enhanced scope validation
+            # Enhanced scope validation with format checking
             if not isinstance(self.SCOPES, list):
-                error_msg = "OAuth scopes must be a list"
+                error_msg = "OAuth scopes configuration must be a list"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
                 
-            if not all(isinstance(s, str) and s.startswith('https://') for s in self.SCOPES):
-                error_msg = "Invalid OAuth scopes: all scopes must be valid HTTPS URLs"
+            if not all(isinstance(s, str) and s.startswith('https://www.googleapis.com/auth/') for s in self.SCOPES):
+                error_msg = "Invalid OAuth scopes: all scopes must be valid Google API URLs"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
 
-            # Create OAuth config with enhanced validation
+            # Create OAuth config with comprehensive structure
             oauth_config = {
-                "web": {
+                "installed": {  # Changed from "web" to "installed" for better compatibility
                     "client_id": self.client_id,
-                    "client_secret": self.client_secret,
+                    "project_id": os.environ.get('GOOGLE_PROJECT_ID', ''),
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    "client_secret": self.client_secret,
                     "redirect_uris": [callback_url],
-                    "javascript_origins": [request_host]
                 }
             }
 
-            # Create and validate flow with additional security measures
-            flow = Flow.from_client_config(
-                oauth_config,
-                scopes=self.SCOPES,
-                redirect_uri=callback_url
-            )
+            # Create flow with enhanced security measures
+            try:
+                flow = Flow.from_client_config(
+                    oauth_config,
+                    scopes=self.SCOPES,
+                    redirect_uri=callback_url
+                )
+            except Exception as flow_error:
+                error_msg = f"Failed to create OAuth flow: {str(flow_error)}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
             # Comprehensive flow validation
-            if not flow.client_config:
-                raise ValueError("OAuth flow missing client configuration")
+            if not flow.client_config or not isinstance(flow.client_config, dict):
+                raise ValueError("Invalid OAuth flow configuration structure")
                 
-            required_keys = {'client_id', 'client_secret', 'auth_uri', 'token_uri', 'redirect_uris'}
-            if not all(key in flow.client_config['web'] for key in required_keys):
-                raise ValueError("OAuth flow configuration missing required fields")
+            required_keys = {
+                'client_id', 'client_secret', 'auth_uri', 'token_uri', 
+                'redirect_uris'
+            }
+            config_section = flow.client_config.get('installed', {})
+            missing_keys = required_keys - set(config_section.keys())
+            if missing_keys:
+                raise ValueError(f"OAuth flow configuration missing required fields: {missing_keys}")
 
             logger.info("OAuth2.0 flow created and validated successfully")
             return flow
