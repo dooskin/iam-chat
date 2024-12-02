@@ -1,13 +1,27 @@
 import os
 import time
+import random
+from urllib.parse import urlparse
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from google.cloud import asset_v1
 import neo4j
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 import logging
-from neo4j.exceptions import ServiceUnavailable, AuthError
+from neo4j.exceptions import (
+    ServiceUnavailable,
+    AuthError,
+    DatabaseError,
+    TransientError,
+    ClientError
+)
+
+# Configure logging with more detailed format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,46 +61,80 @@ class GCPConnector:
 
     @property
     def neo4j_driver(self):
-        """Lazy initialization of Neo4j driver with connection pooling and retry logic."""
+        """Lazy initialization of Neo4j driver with enhanced connection pooling and retry logic."""
         if self._driver is None:
             retry_count = 0
-            max_retries = 3
+            max_retries = 5  # Increased max retries
             base_delay = 1  # Base delay in seconds
+            max_delay = 32  # Maximum delay in seconds
 
             while retry_count < max_retries:
                 try:
-                    # Configure connection pooling
+                    # Validate Neo4j configuration
+                    if not all([self.neo4j_uri, self.neo4j_user, self.neo4j_password]):
+                        raise ValueError("Missing required Neo4j credentials")
+
+                    if not self.neo4j_uri.startswith(('bolt://', 'neo4j://', 'neo4j+s://')):
+                        raise ValueError("Invalid Neo4j URI format")
+
+                    # Configure connection pooling with optimized settings
                     self._driver = neo4j.GraphDatabase.driver(
                         self.neo4j_uri,
                         auth=(self.neo4j_user, self.neo4j_password),
                         max_connection_lifetime=3600,  # 1 hour
-                        max_connection_pool_size=50,
-                        connection_acquisition_timeout=60  # 60 seconds
+                        max_connection_pool_size=50,   # Adjust based on expected concurrent connections
+                        connection_acquisition_timeout=60,  # 60 seconds
+                        connection_timeout=30,  # 30 seconds connection timeout
+                        max_retry_time=30,  # Maximum time to retry transactions
+                        keep_alive=True     # Enable keep-alive
                     )
                     
-                    # Test the connection and verify access
-                    with self._driver.session(database="neo4j") as session:
-                        session.run("RETURN 1")
-                        logger.info("Successfully connected to Neo4j database")
+                    # Test the connection with timeout
+                    with self._driver.session(database="neo4j", fetch_size=1) as session:
+                        # Use parameter to prevent injection
+                        result = session.run("RETURN $test_value AS test", 
+                                           test_value=1,
+                                           timeout=10)  # 10 second timeout
+                        result.single()
+                        logger.info("Successfully established Neo4j connection with verified access")
                         
-                    # Initialize schema
-                    self._initialize_schema()
+                        # Get Neo4j server version for logging
+                        version_result = session.run("CALL dbms.components() YIELD name, versions RETURN name, versions")
+                        version_info = version_result.single()
+                        if version_info:
+                            logger.info(f"Connected to Neo4j {version_info['name']} version {version_info['versions'][0]}")
+                        
+                    # Initialize schema with separate retry logic
+                    try:
+                        self._initialize_schema()
+                    except Exception as schema_error:
+                        logger.error(f"Schema initialization failed: {str(schema_error)}")
+                        self._driver.close()
+                        self._driver = None
+                        raise
+                        
                     break  # Exit loop if successful
                     
-                except neo4j.exceptions.ServiceUnavailable as e:
+                except (neo4j.exceptions.ServiceUnavailable,
+                       neo4j.exceptions.DatabaseError,
+                       neo4j.exceptions.TransientError) as e:
                     retry_count += 1
                     if retry_count == max_retries:
-                        error_msg = f"Failed to connect to Neo4j after {max_retries} attempts: {str(e)}"
+                        error_msg = f"Failed to establish Neo4j connection after {max_retries} attempts: {str(e)}"
                         logger.error(error_msg)
                         raise ConnectionError(error_msg)
                     
-                    delay = base_delay * (2 ** (retry_count - 1))  # Exponential backoff
-                    logger.warning(f"Neo4j connection attempt {retry_count} failed, retrying in {delay} seconds...")
+                    # Calculate delay with exponential backoff and jitter
+                    delay = min(base_delay * (2 ** (retry_count - 1)) + random.uniform(0, 1), max_delay)
+                    logger.warning(f"Neo4j connection attempt {retry_count} failed ({str(e)}), retrying in {delay:.2f} seconds...")
                     time.sleep(delay)
                     
                 except Exception as e:
-                    error_msg = f"Failed to initialize Neo4j connection: {str(e)}"
+                    error_msg = f"Unexpected error during Neo4j initialization: {str(e)}"
                     logger.error(error_msg)
+                    if self._driver:
+                        self._driver.close()
+                        self._driver = None
                     raise ConnectionError(error_msg)
                     
         return self._driver
@@ -164,20 +212,35 @@ class GCPConnector:
             ConnectionError: If unable to validate credentials
         """
         try:
-            # Validate OAuth credentials
-            if not self.client_id or len(self.client_id) < 20:
-                error_msg = "Invalid Google client ID format or missing client ID"
+            # Enhanced credential validation
+            if not self.client_id or not isinstance(self.client_id, str):
+                error_msg = "Invalid Google client ID: must be a non-empty string"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
                 
-            if not self.client_secret or len(self.client_secret) < 10:
-                error_msg = "Invalid Google client secret format or missing client secret"
+            if len(self.client_id) < 20 or not self.client_id.endswith('.apps.googleusercontent.com'):
+                error_msg = "Invalid Google client ID format: must be valid OAuth 2.0 client ID"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+            if not self.client_secret or not isinstance(self.client_secret, str):
+                error_msg = "Invalid Google client secret: must be a non-empty string"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+            if len(self.client_secret) < 10:
+                error_msg = "Invalid Google client secret: insufficient length"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
 
-            # Build dynamic callback URL
+            # Build and validate dynamic callback URL
             if not request_host:
                 error_msg = "Request host is required for dynamic callback URL"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+            if not isinstance(request_host, str):
+                error_msg = "Request host must be a string"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
                 
@@ -185,35 +248,61 @@ class GCPConnector:
                 error_msg = "Invalid request host format - must include protocol (http:// or https://)"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
+
+            # Normalize and validate callback URL
+            callback_path = '/auth/google/callback'
+            callback_url = request_host.rstrip('/') + callback_path
+            
+            # Validate URL format
+            try:
+                from urllib.parse import urlparse
+                parsed_url = urlparse(callback_url)
+                if not all([parsed_url.scheme, parsed_url.netloc]):
+                    raise ValueError("Invalid URL format")
+            except Exception as e:
+                error_msg = f"Invalid callback URL format: {str(e)}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
                 
-            callback_url = f"{request_host}/auth/google/callback"
-            logger.info(f"Using dynamic callback URL: {callback_url}")
+            logger.info(f"Using validated callback URL: {callback_url}")
 
-            # Validate scopes
-            if not isinstance(self.SCOPES, list) or not all(isinstance(s, str) for s in self.SCOPES):
-                raise ValueError("Invalid OAuth scopes configuration")
+            # Enhanced scope validation
+            if not isinstance(self.SCOPES, list):
+                error_msg = "OAuth scopes must be a list"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+            if not all(isinstance(s, str) and s.startswith('https://') for s in self.SCOPES):
+                error_msg = "Invalid OAuth scopes: all scopes must be valid HTTPS URLs"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
-            # Create OAuth config with validation
+            # Create OAuth config with enhanced validation
             oauth_config = {
                 "web": {
                     "client_id": self.client_id,
                     "client_secret": self.client_secret,
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [callback_url]
+                    "redirect_uris": [callback_url],
+                    "javascript_origins": [request_host]
                 }
             }
 
-            # Create and validate flow
+            # Create and validate flow with additional security measures
             flow = Flow.from_client_config(
                 oauth_config,
                 scopes=self.SCOPES,
                 redirect_uri=callback_url
             )
 
-            # Verify flow configuration
-            if not flow.client_config or not flow.client_config.get('web'):
-                raise ValueError("Invalid OAuth flow configuration")
+            # Comprehensive flow validation
+            if not flow.client_config:
+                raise ValueError("OAuth flow missing client configuration")
+                
+            required_keys = {'client_id', 'client_secret', 'auth_uri', 'token_uri', 'redirect_uris'}
+            if not all(key in flow.client_config['web'] for key in required_keys):
+                raise ValueError("OAuth flow configuration missing required fields")
 
             logger.info("OAuth2.0 flow created and validated successfully")
             return flow
