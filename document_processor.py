@@ -497,10 +497,128 @@ def validate_openai_response(response_data: Dict[str, Any]) -> Dict[str, List[Di
     except (TypeError, KeyError, json.JSONDecodeError) as e:
         raise OpenAIProcessingError(f"Error validating OpenAI response: {str(e)}") from e
 
+class OpenAIHandler:
+    """Handler for OpenAI API interactions and rule extraction."""
+    
+    def __init__(self):
+        """Initialize OpenAIHandler with retry-enabled client."""
+        self.client = self._get_client()
+    
+    @retry_on_error(max_retries=3)
+    def _get_client(self) -> OpenAI:
+        """
+        Get an initialized OpenAI client.
+        
+        Returns:
+            OpenAI: Configured client instance
+            
+        Raises:
+            OpenAIProcessingError: If client initialization fails
+        """
+        try:
+            return OpenAI()
+        except Exception as e:
+            raise OpenAIProcessingError(f"Failed to initialize OpenAI client: {str(e)}") from e
+    
+    @retry_on_error(max_retries=3)
+    def extract_rules(self, text: str) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Extract rules from document text using OpenAI.
+        
+        Args:
+            text: Document text to analyze
+            
+        Returns:
+            Dict[str, List[Dict[str, Any]]]: Dictionary containing extracted rules
+            
+        Raises:
+            OpenAIProcessingError: If rule extraction fails
+        """
+        try:
+            response_data = self._make_api_request(text)
+            validated_response = self._validate_response(response_data)
+            rule_count = len(validated_response['rules'])
+            logger.info(
+                f"Successfully extracted {rule_count} valid rules",
+                extra={'text_length': len(text), 'rule_count': rule_count}
+            )
+            return validated_response
+        except Exception as e:
+            logger.error(
+                f"Failed to extract rules: {str(e)}",
+                extra={'text_length': len(text), 'error_type': type(e).__name__}
+            )
+            raise OpenAIProcessingError(f"Rule extraction failed: {str(e)}") from e
+    
+    def _make_api_request(self, text: str) -> Dict[str, Any]:
+        """
+        Make request to OpenAI API.
+        
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            Dict[str, Any]: Parsed API response
+            
+        Raises:
+            OpenAIProcessingError: If API request fails
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": create_system_prompt()},
+                    {"role": "user", "content": text}
+                ],
+                temperature=0.7
+            )
+            
+            content = response.choices[0].message.content
+            if not content:
+                raise OpenAIProcessingError("Empty response from OpenAI")
+                
+            return json.loads(content)
+        except Exception as e:
+            raise OpenAIProcessingError(f"OpenAI API request failed: {str(e)}") from e
+    
+    def _validate_response(self, response_data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Validate and process API response.
+        
+        Args:
+            response_data: Raw API response
+            
+        Returns:
+            Dict[str, List[Dict[str, Any]]]: Validated rules
+            
+        Raises:
+            OpenAIProcessingError: If validation fails
+        """
+        try:
+            if not isinstance(response_data, dict):
+                raise OpenAIProcessingError("Invalid response format: expected dictionary")
+                
+            rules = response_data.get('rules')
+            if not isinstance(rules, list):
+                raise OpenAIProcessingError("Invalid response format: 'rules' must be a list")
+                
+            validated_rules = [rule for rule in rules if validate_rule(rule)]
+            if not validated_rules:
+                logger.warning("No valid rules found in OpenAI response")
+                
+            return {'rules': validated_rules}
+        except Exception as e:
+            raise OpenAIProcessingError(f"Response validation failed: {str(e)}") from e
+
 @retry_on_error(max_retries=3)
 def process_document_text(text: str) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Process document text using OpenAI to extract structured rules.
+    Process document text to extract structured rules using OpenAI.
+    
+    This function coordinates the rule extraction process by:
+    1. Initializing the OpenAI handler
+    2. Extracting rules from the document text
+    3. Validating and returning the extracted rules
     
     Args:
         text: Document text to process
@@ -513,12 +631,11 @@ def process_document_text(text: str) -> Dict[str, List[Dict[str, Any]]]:
         JSONDecodeError: If JSON parsing fails
     """
     try:
-        client = get_openai_client()
-        response_data = make_openai_request(client, text)
-        validated_response = validate_openai_response(response_data)
-        logger.info(f"Successfully extracted {len(validated_response['rules'])} valid rules")
-        return validated_response
-        
+        handler = OpenAIHandler()
+        return handler.extract_rules(text)
     except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error in OpenAI response: {str(e)}")
+        logger.error(
+            f"JSON parsing error in OpenAI response: {str(e)}",
+            extra={'error_type': 'JSONDecodeError', 'text_length': len(text)}
+        )
         raise OpenAIProcessingError(f"Failed to parse OpenAI response: {str(e)}") from e
