@@ -13,6 +13,8 @@ from werkzeug.utils import secure_filename
 from document_processor import process_document
 from policy_engine import evaluate_access_request
 from typing import Union, Optional
+from gcp_connector import GCPConnector
+import neo4j
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -236,7 +238,7 @@ def google_auth():
     """Initiate Google OAuth2.0 flow."""
     try:
         gcp = GCPConnector()
-        flow = gcp.create_oauth_flow(url_for('google_callback', _external=True))
+        flow = gcp.create_oauth_flow('https://access-bot-ai-t020.id.repl.co/auth/google/callback')
         authorization_url, state = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true'
