@@ -9,10 +9,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from chatbot import process_chat_message
 from database import db
 from models import User, CompliancePolicy, ComplianceRecord, ComplianceDocument
-import os
 from werkzeug.utils import secure_filename
 from document_processor import process_document
 from policy_engine import evaluate_access_request
+from typing import Union, Optional
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -36,12 +36,14 @@ login_manager.login_message_category = 'info'
 
 @login_manager.unauthorized_handler
 def unauthorized():
+    """Handle unauthorized access attempts."""
     logger.warning(f'Unauthorized access attempt to {request.url}')
     flash('You must be logged in to view this page.', 'warning')
     return redirect(url_for('login', next=request.url))
 
 @login_manager.user_loader
-def load_user(user_id):
+def load_user(user_id: str) -> Optional[User]:
+    """Load user by ID for Flask-Login."""
     try:
         return User.query.get(int(user_id))
     except Exception as e:
@@ -51,11 +53,13 @@ def load_user(user_id):
 @app.route('/')
 @login_required
 def index():
+    """Render the main chat interface."""
     logger.info(f'User {current_user.username} accessed the chat interface')
     return render_template('chat.html')
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    """Handle user login."""
     if current_user.is_authenticated:
         logger.debug('Already authenticated user accessing login page')
         return redirect(url_for('index'))
@@ -97,10 +101,12 @@ def login():
 @app.route('/logout')
 @login_required
 def logout():
+    """Handle user logout."""
     logout_user()
     return redirect(url_for('login'))
 
 def admin_required(f):
+    """Decorator to require admin role for a route."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not current_user.is_authenticated or current_user.role != 'admin':
@@ -113,6 +119,7 @@ def admin_required(f):
 @login_required
 @admin_required
 def users():
+    """Display all users (admin only)."""
     users_list = User.query.all()
     return render_template('users.html', users=users_list)
 
@@ -120,6 +127,7 @@ def users():
 @login_required
 @admin_required
 def add_user():
+    """Add a new user (admin only)."""
     username = request.form.get('username')
     email = request.form.get('email')
     password = request.form.get('password')
@@ -163,7 +171,8 @@ def add_user():
 @app.route('/users/<int:user_id>/role', methods=['POST'])
 @login_required
 @admin_required
-def update_user_role(user_id):
+def update_user_role(user_id: int):
+    """Update a user's role (admin only)."""
     user = User.query.get_or_404(user_id)
     new_role = request.form.get('role')
     
@@ -185,16 +194,82 @@ def update_user_role(user_id):
 @app.route('/integrations')
 @login_required
 def integrations():
+    """Display integrations page."""
     return render_template('integrations.html')
 
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
+    """Display user settings page."""
     return render_template('settings.html')
+
+@app.route('/settings/update', methods=['POST'])
+@login_required
+def update_settings():
+    """
+    Update user settings including email, password, and notification preferences.
+    
+    This function handles:
+    1. Email updates with duplicate checking
+    2. Password changes with validation
+    3. Notification preference updates
+    
+    Returns:
+        Response: Redirect to settings page with appropriate flash messages
+    """
+    try:
+        # Update email
+        email = request.form.get('email')
+        if email and email != current_user.email:
+            # Check if email is already in use
+            if User.query.filter_by(email=email).first():
+                flash('Email already in use', 'danger')
+                return redirect(url_for('settings'))
+            current_user.email = email
+            flash('Email updated successfully', 'success')
+
+        # Update password
+        current_password = request.form.get('current_password')
+        new_password = request.form.get('new_password')
+        confirm_password = request.form.get('confirm_password')
+
+        if current_password and new_password and confirm_password:
+            if new_password != confirm_password:
+                flash('New passwords do not match', 'danger')
+                return redirect(url_for('settings'))
+                
+            if not check_password_hash(current_user.password_hash, current_password):
+                flash('Current password is incorrect', 'danger')
+                return redirect(url_for('settings'))
+                
+            if len(new_password) < 8:
+                flash('Password must be at least 8 characters long', 'danger')
+                return redirect(url_for('settings'))
+                
+            current_user.password_hash = generate_password_hash(new_password)
+            flash('Password updated successfully', 'success')
+
+        # Update notification preferences
+        notification_prefs = {}
+        for pref in ['email_notifications', 'security_alerts', 'compliance_updates']:
+            notification_prefs[pref] = request.form.get(pref) == 'on'
+        
+        current_user.notification_preferences = notification_prefs
+        flash('Notification preferences updated successfully', 'success')
+
+        db.session.commit()
+        
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        flash('Error updating settings', 'danger')
+        logger.error(f'Error updating settings: {str(e)}')
+
+    return redirect(url_for('settings'))
 
 @app.route('/compliance')
 @login_required
 def compliance():
+    """Display compliance dashboard with statistics and documents."""
     stats = {
         'total_documents': ComplianceDocument.query.count(),
         'active_policies': CompliancePolicy.query.filter_by(status='active').count(),
@@ -222,6 +297,7 @@ def compliance():
 @app.route('/compliance/policy', methods=['POST'])
 @login_required
 def add_compliance_policy():
+    """Add a new compliance policy (admin only)."""
     if current_user.role != 'admin':
         flash('Permission denied', 'danger')
         return redirect(url_for('compliance'))
@@ -246,6 +322,15 @@ def add_compliance_policy():
 @app.route('/compliance/document/upload', methods=['POST'])
 @login_required
 def upload_compliance_document():
+    """
+    Handle compliance document upload and processing.
+    
+    This function:
+    1. Validates user permissions
+    2. Processes uploaded PDF file
+    3. Creates document record
+    4. Initiates document processing
+    """
     if current_user.role != 'admin':
         logger.warning(f"Non-admin user {current_user.username} attempted to upload document")
         flash('Permission denied', 'danger')
@@ -308,66 +393,16 @@ def upload_compliance_document():
 
 @app.route('/compliance/policy/<int:policy_id>')
 @login_required
-def view_policy(policy_id):
+def view_policy(policy_id: int):
+    """View details of a specific compliance policy."""
     policy = CompliancePolicy.query.get_or_404(policy_id)
     records = ComplianceRecord.query.filter_by(policy_id=policy_id).all()
     return render_template('policy_detail.html', policy=policy, records=records)
 
-@app.route('/settings/update', methods=['POST'])
-@login_required
-def update_settings():
-    try:
-        # Update email
-        email = request.form.get('email')
-        if email and email != current_user.email:
-            # Check if email is already in use
-            if User.query.filter_by(email=email).first():
-                flash('Email already in use', 'danger')
-                return redirect(url_for('settings'))
-            current_user.email = email
-            flash('Email updated successfully', 'success')
-
-        # Update password
-        current_password = request.form.get('current_password')
-        new_password = request.form.get('new_password')
-        confirm_password = request.form.get('confirm_password')
-
-        if current_password and new_password and confirm_password:
-            if new_password != confirm_password:
-                flash('New passwords do not match', 'danger')
-                return redirect(url_for('settings'))
-                
-            if not check_password_hash(current_user.password_hash, current_password):
-                flash('Current password is incorrect', 'danger')
-                return redirect(url_for('settings'))
-                
-            if len(new_password) < 8:
-                flash('Password must be at least 8 characters long', 'danger')
-                return redirect(url_for('settings'))
-                
-            current_user.password_hash = generate_password_hash(new_password)
-            flash('Password updated successfully', 'success')
-
-        # Update notification preferences
-        notification_prefs = {}
-        for pref in ['email_notifications', 'security_alerts', 'compliance_updates']:
-            notification_prefs[pref] = request.form.get(pref) == 'on'
-        
-        current_user.notification_preferences = notification_prefs
-        flash('Notification preferences updated successfully', 'success')
-
-        db.session.commit()
-        
-    except SQLAlchemyError as e:
-        db.session.rollback()
-        flash('Error updating settings', 'danger')
-        logger.error(f'Error updating settings: {str(e)}')
-
-    return redirect(url_for('settings'))
-
 @app.route('/compliance/document/<int:doc_id>/delete', methods=['POST'])
 @login_required
-def delete_compliance_document(doc_id):
+def delete_compliance_document(doc_id: int):
+    """Delete a compliance document and its associated rules."""
     try:
         document = ComplianceDocument.query.get_or_404(doc_id)
         
@@ -393,7 +428,7 @@ def delete_compliance_document(doc_id):
 
 @app.route('/compliance/document/status/<filename>')
 @login_required
-def get_document_status(filename):
+def get_document_status(filename: str):
     """Get the processing status of a compliance document."""
     try:
         document = ComplianceDocument.query.filter_by(filename=filename).first()
@@ -406,7 +441,7 @@ def get_document_status(filename):
 
 @app.route('/compliance/document/<int:doc_id>/rules')
 @login_required
-def get_document_rules(doc_id):
+def get_document_rules(doc_id: int):
     """Fetch rules for a specific compliance document."""
     document = ComplianceDocument.query.get_or_404(doc_id)
     rules = document.rules.all()
@@ -421,59 +456,10 @@ def get_document_rules(doc_id):
     
     return jsonify({'rules': rules_data})
 
-def update_settings():
-    try:
-        # Update email
-        email = request.form.get('email')
-        if email and email != current_user.email:
-            # Check if email is already in use
-            if User.query.filter_by(email=email).first():
-                flash('Email already in use', 'danger')
-                return redirect(url_for('settings'))
-            current_user.email = email
-            flash('Email updated successfully', 'success')
-
-        # Update password
-        current_password = request.form.get('current_password')
-        new_password = request.form.get('new_password')
-        confirm_password = request.form.get('confirm_password')
-
-        if current_password and new_password and confirm_password:
-            if new_password != confirm_password:
-                flash('New passwords do not match', 'danger')
-                return redirect(url_for('settings'))
-                
-            if not check_password_hash(current_user.password_hash, current_password):
-                flash('Current password is incorrect', 'danger')
-                return redirect(url_for('settings'))
-                
-            if len(new_password) < 8:
-                flash('Password must be at least 8 characters long', 'danger')
-                return redirect(url_for('settings'))
-                
-            current_user.password_hash = generate_password_hash(new_password)
-            flash('Password updated successfully', 'success')
-
-        # Update notification preferences
-        notification_prefs = {}
-        for pref in ['email_notifications', 'security_alerts', 'compliance_updates']:
-            notification_prefs[pref] = request.form.get(pref) == 'on'
-        
-        current_user.notification_preferences = notification_prefs
-        flash('Notification preferences updated successfully', 'success')
-
-        db.session.commit()
-        
-    except SQLAlchemyError as e:
-        db.session.rollback()
-        flash('Error updating settings', 'danger')
-        logger.error(f'Error updating settings: {str(e)}')
-
-    return redirect(url_for('settings'))
-
 @app.route('/api/chat', methods=['POST'])
 @login_required
 def chat():
+    """Handle chat API requests with access control evaluation."""
     if not request.is_json:
         return jsonify({'error': 'Content-Type must be application/json'}), 400
         
@@ -512,7 +498,7 @@ with app.app_context():
         # Create admin user if it doesn't exist
         admin_user = User.query.filter_by(username='admin69!').first()
         if not admin_user:
-            print("Creating admin user...")  # Temporary print statement
+            logger.info("Creating admin user...")
             admin_user = User(
                 username='admin69!',
                 email='admin@example.com',
@@ -522,16 +508,16 @@ with app.app_context():
             try:
                 db.session.add(admin_user)
                 db.session.commit()
-                print("Admin user created successfully")  # Temporary print statement
                 logger.info("Admin user created successfully")
             except SQLAlchemyError as e:
                 db.session.rollback()
                 logger.error(f"Error creating admin user: {str(e)}")
-                print(f"Error creating admin user: {str(e)}")  # Temporary print statement
         else:
-            print("Admin user already exists")  # Temporary print statement
             logger.info("Admin user already exists")
             
     except SQLAlchemyError as e:
         logger.error(f"Database initialization error: {str(e)}")
         raise
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
