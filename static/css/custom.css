@@ -284,23 +284,26 @@
 }
 
 .message.user {
-    background: linear-gradient(135deg, var(--bs-primary) 0%, var(--bs-primary-dark) 100%);
+    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
     margin-left: auto;
     border-bottom-right-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .message.bot {
-    background: linear-gradient(135deg, var(--bs-secondary) 0%, var(--bs-dark) 100%);
+    background: linear-gradient(135deg, #2f3640 0%, #1e272e 100%);
     margin-right: auto;
     border-bottom-left-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .message.system {
-    background: linear-gradient(135deg, var(--bs-info) 0%, var(--bs-primary) 100%);
+    background: linear-gradient(135deg, #2980b9 0%, #3498db 50%, #2980b9 100%);
     color: var(--bs-light);
     text-align: center;
     margin: 1rem auto;
     max-width: 90%;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 /* Scroll bar styling */
