@@ -628,9 +628,6 @@ def get_document_rules(doc_id: int):
     
     return jsonify({'rules': rules_data})
 
-
-
-
 @app.route('/api/chat', methods=['POST'])
 @login_required
 def chat():
