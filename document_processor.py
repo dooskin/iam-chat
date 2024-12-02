@@ -1,17 +1,104 @@
 import os
 import json
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TypeVar, Callable
 from datetime import datetime
 import time
+from functools import wraps
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.utils import secure_filename
 from pdfminer.high_level import extract_text
 from openai import OpenAI
+from contextlib import contextmanager
 from database import db
 from models import ComplianceDocument, ComplianceRule, CompliancePolicy
 
+# Type variable for generic return type
+T = TypeVar('T')
+
+# Configure logging
 logger = logging.getLogger(__name__)
+
+# Custom Exceptions
+class DocumentProcessingError(Exception):
+    """Base exception for document processing errors."""
+    pass
+
+class PDFExtractionError(DocumentProcessingError):
+    """Raised when text extraction from PDF fails."""
+    pass
+
+class OpenAIProcessingError(DocumentProcessingError):
+    """Raised when OpenAI API processing fails."""
+    pass
+
+class RuleValidationError(DocumentProcessingError):
+    """Raised when rule validation fails."""
+    pass
+
+class PolicyCreationError(DocumentProcessingError):
+    """Raised when policy creation fails."""
+    pass
+
+def retry_on_error(max_retries: int = 3, delay: float = 1.0) -> Callable:
+    """
+    Decorator to retry a function on failure with exponential backoff.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        delay: Initial delay between retries in seconds
+        
+    Returns:
+        Callable: Decorated function
+    """
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> T:
+            retries = 0
+            current_delay = delay
+            last_error = None
+
+            while retries < max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_error = e
+                    retries += 1
+                    if retries < max_retries:
+                        logger.warning(
+                            f"Attempt {retries} failed for {func.__name__}: {str(e)}. "
+                            f"Retrying in {current_delay} seconds..."
+                        )
+                        time.sleep(current_delay)
+                        current_delay *= 2  # Exponential backoff
+                    else:
+                        logger.error(
+                            f"All {max_retries} attempts failed for {func.__name__}. "
+                            f"Last error: {str(last_error)}"
+                        )
+                        raise last_error
+            return None  # Type checker requirement
+        return wrapper
+    return decorator
+
+@contextmanager
+def db_transaction():
+    """
+    Context manager for database transactions.
+    
+    Yields:
+        db.session: The current database session
+    
+    Raises:
+        SQLAlchemyError: If database operations fail
+    """
+    try:
+        yield db.session
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Database transaction failed: {str(e)}")
+        raise
 
 def validate_rule(rule_data: Dict[str, Any]) -> bool:
     """
@@ -22,22 +109,28 @@ def validate_rule(rule_data: Dict[str, Any]) -> bool:
         
     Returns:
         bool: True if rule is valid, False otherwise
+        
+    Raises:
+        RuleValidationError: If validation fails due to invalid data structure
     """
     try:
         required_fields = ['type', 'description', 'priority']
         if not all(field in rule_data for field in required_fields):
-            return False
+            raise RuleValidationError("Missing required fields in rule data")
             
         if not isinstance(rule_data['priority'], (int, float)) or not (1 <= rule_data['priority'] <= 5):
-            return False
+            raise RuleValidationError("Invalid priority value")
             
         if not isinstance(rule_data['description'], str) or len(rule_data['description']) < 10:
-            return False
+            raise RuleValidationError("Invalid description")
             
         return True
         
+    except RuleValidationError as e:
+        logger.error(f"Rule validation error: {str(e)}")
+        return False
     except Exception as e:
-        logger.error(f"Error validating rule: {str(e)}")
+        logger.error(f"Unexpected error in rule validation: {str(e)}")
         return False
 
 def extract_pdf_text(file_path: str) -> str:
@@ -51,26 +144,32 @@ def extract_pdf_text(file_path: str) -> str:
         str: Extracted text content
         
     Raises:
-        ValueError: If no text content could be extracted
-        Exception: For any other extraction errors
+        PDFExtractionError: If text extraction fails
     """
     try:
         text = extract_text(file_path)
         if not text:
-            raise ValueError("No text content extracted from PDF")
+            raise PDFExtractionError("No text content extracted from PDF")
         return text
     except Exception as e:
         logger.error(f"Error extracting text from PDF: {str(e)}")
-        raise
+        raise PDFExtractionError(f"Failed to extract text: {str(e)}") from e
 
+@retry_on_error(max_retries=3)
 def get_openai_client() -> OpenAI:
     """
     Initialize and return OpenAI client instance.
     
     Returns:
         OpenAI: Configured OpenAI client
+        
+    Raises:
+        OpenAIProcessingError: If client initialization fails
     """
-    return OpenAI()
+    try:
+        return OpenAI()
+    except Exception as e:
+        raise OpenAIProcessingError(f"Failed to initialize OpenAI client: {str(e)}") from e
 
 def create_system_prompt() -> str:
     """
@@ -104,6 +203,7 @@ def create_system_prompt() -> str:
 
     Return the rules in a JSON array under a 'rules' key."""
 
+@retry_on_error(max_retries=3)
 def make_openai_request(client: OpenAI, text: str) -> Dict[str, Any]:
     """
     Make a request to OpenAI API for document analysis.
@@ -116,130 +216,78 @@ def make_openai_request(client: OpenAI, text: str) -> Dict[str, Any]:
         Dict[str, Any]: Parsed response from OpenAI
         
     Raises:
-        ValueError: If response is empty or invalid
-        json.JSONDecodeError: If response parsing fails
+        OpenAIProcessingError: If API request fails or response is invalid
     """
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": create_system_prompt()},
-            {"role": "user", "content": text}
-        ],
-        temperature=0.7
-    )
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": create_system_prompt()},
+                {"role": "user", "content": text}
+            ],
+            temperature=0.7
+        )
 
-    content = response.choices[0].message.content
-    if not content:
-        raise ValueError("Empty response from OpenAI")
+        content = response.choices[0].message.content
+        if not content:
+            raise OpenAIProcessingError("Empty response from OpenAI")
 
-    return json.loads(content)
+        return json.loads(content)
+    except Exception as e:
+        raise OpenAIProcessingError(f"OpenAI request failed: {str(e)}") from e
 
-def validate_openai_response(data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Validate the structure and content of OpenAI API response.
-    
-    Args:
-        data: Parsed response data from OpenAI
-        
-    Returns:
-        List[Dict[str, Any]]: List of validated rules
-        
-    Raises:
-        ValueError: If response format is invalid
-    """
-    if not isinstance(data, dict) or 'rules' not in data:
-        raise ValueError("Invalid response format")
-
-    rules = data['rules']
-    if not isinstance(rules, list):
-        raise ValueError("Rules must be an array")
-
-    validated_rules = [rule for rule in rules if validate_rule(rule)]
-    logger.info(f"Successfully extracted {len(validated_rules)} valid rules")
-    return validated_rules
-
-def process_document_text(text: str, max_retries: int = 3) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Process document text using OpenAI to extract structured rules and requirements.
-    
-    Args:
-        text: Document text to process
-        max_retries: Maximum number of retry attempts
-        
-    Returns:
-        Dict[str, List[Dict[str, Any]]]: Dictionary containing extracted rules
-    """
-    client = get_openai_client()
-    retry_count = 0
-    last_error = None
-
-    while retry_count < max_retries:
-        try:
-            response_data = make_openai_request(client, text)
-            validated_rules = validate_openai_response(response_data)
-            return {'rules': validated_rules}
-
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error (attempt {retry_count + 1}): {str(e)}")
-            last_error = e
-        except Exception as e:
-            logger.error(f"Error processing OpenAI response (attempt {retry_count + 1}): {str(e)}")
-            last_error = e
-
-        retry_count += 1
-        if retry_count < max_retries:
-            logger.info(f"Retrying OpenAI request (attempt {retry_count + 1})")
-            time.sleep(1)  # Add delay between retries
-        
-    logger.error(f"All retries failed. Last error: {str(last_error)}")
-    return {'rules': []}
-
-def create_compliance_rules(document: ComplianceDocument, rules: List[Dict[str, Any]]) -> None:
+def create_compliance_rules(document: ComplianceDocument, rules: List[Dict[str, Any]], session) -> None:
     """
     Create ComplianceRule records from extracted rules.
     
     Args:
         document: ComplianceDocument instance
         rules: List of validated rules to create
+        session: SQLAlchemy session
         
     Raises:
         SQLAlchemyError: If database operations fail
     """
-    try:
-        rule_objects = []
-        for rule_data in rules:
-            conditions = {
-                'subject': rule_data['conditions'].get('subject', ''),
-                'timing': rule_data['conditions'].get('timing', ''),
-                'prerequisites': rule_data['conditions'].get('prerequisites', '')
-            }
-            
-            actions = {
-                'required_steps': rule_data['actions'].get('required_steps', []),
-                'verification': rule_data['actions'].get('verification')
-            }
-            
-            rule = ComplianceRule(
-                document_id=document.id,
-                rule_type=rule_data['type'],
-                description=rule_data['description'],
-                conditions=conditions,
-                actions=actions,
-                priority=rule_data['priority']
-            )
-            rule_objects.append(rule)
-            
-        # Use bulk insert for better performance
-        db.session.bulk_save_objects(rule_objects)
-        db.session.commit()
-        logger.info(f"Successfully created {len(rules)} compliance rules for document {document.id}")
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error creating compliance rules: {str(e)}")
-        raise
+    rule_objects = []
+    for rule_data in rules:
+        conditions = {
+            'subject': rule_data['conditions'].get('subject', ''),
+            'timing': rule_data['conditions'].get('timing', ''),
+            'prerequisites': rule_data['conditions'].get('prerequisites', '')
+        }
+        
+        actions = {
+            'required_steps': rule_data['actions'].get('required_steps', []),
+            'verification': rule_data['actions'].get('verification')
+        }
+        
+        rule = ComplianceRule(
+            document_id=document.id,
+            rule_type=rule_data['type'],
+            description=rule_data['description'],
+            conditions=conditions,
+            actions=actions,
+            priority=rule_data['priority']
+        )
+        rule_objects.append(rule)
+        
+    session.bulk_save_objects(rule_objects)
+    logger.info(f"Successfully created {len(rules)} compliance rules for document {document.id}")
 
-def create_policy_from_rules(rules: List[Dict], document_id: int) -> Optional[Dict]:
-    """Convert extracted rules into a compliance policy with unique naming."""
+def create_policy_from_rules(rules: List[Dict[str, Any]], document_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Convert extracted rules into a compliance policy.
+    
+    Args:
+        rules: List of validated rules
+        document_id: ID of the source document
+        
+    Returns:
+        Optional[Dict[str, Any]]: Policy data if successful, None otherwise
+        
+    Raises:
+        PolicyCreationError: If policy creation fails
+    """
     try:
         if not rules:
             return None
@@ -248,7 +296,7 @@ def create_policy_from_rules(rules: List[Dict], document_id: int) -> Optional[Di
         high_priority_rules = [r for r in rules if r['priority'] >= 4]
         other_rules = [r for r in rules if r['priority'] < 4]
         
-        # Enhanced category detection with keyword mapping
+        # Category detection
         category_keywords = {
             'GDPR': ['gdpr', 'data protection', 'privacy', 'eu regulation'],
             'SOX': ['sox', 'sarbanes', 'financial control', 'audit'],
@@ -257,7 +305,6 @@ def create_policy_from_rules(rules: List[Dict], document_id: int) -> Optional[Di
             'ISO27001': ['iso 27001', 'information security', 'isms'],
         }
         
-        # Determine categories based on enhanced keyword matching
         categories = set()
         combined_text = ' '.join(rule['description'].lower() for rule in rules)
         
@@ -267,30 +314,29 @@ def create_policy_from_rules(rules: List[Dict], document_id: int) -> Optional[Di
         
         primary_category = next(iter(categories)) if categories else 'General'
         
-        # Generate unique policy name with timestamp and document ID
+        # Generate unique policy name
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         name = f"Policy_{primary_category}_{document_id}_{timestamp}"
         
-        description = f"Auto-generated compliance policy for document {document_id}\n"
-        description += f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        # Create policy description
+        description = (
+            f"Auto-generated compliance policy for document {document_id}\n"
+            f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        )
         
-        # Add detected categories
         if categories:
             description += "Compliance Categories: " + ", ".join(categories) + "\n\n"
         
-        # Add high priority rules first
         if high_priority_rules:
             description += "Critical Requirements:\n"
-            for rule in high_priority_rules:
-                description += f"- {rule['description']}\n"
+            description += "\n".join(f"- {rule['description']}" for rule in high_priority_rules)
+            description += "\n\n"
         
-        # Add other rules
         if other_rules:
-            description += "\nAdditional Requirements:\n"
-            for rule in other_rules:
-                description += f"- {rule['description']}\n"
+            description += "Additional Requirements:\n"
+            description += "\n".join(f"- {rule['description']}" for rule in other_rules)
         
-        # Enhanced requirements section with better structure
+        # Create requirements section
         requirements = "Implementation Requirements:\n\n"
         priority_groups = {}
         
@@ -301,13 +347,11 @@ def create_policy_from_rules(rules: List[Dict], document_id: int) -> Optional[Di
                     priority_groups[priority] = []
                 priority_groups[priority].extend(rule['actions']['required_steps'])
         
-        # Sort by priority (highest first) and deduplicate steps
         for priority in sorted(priority_groups.keys(), reverse=True):
             requirements += f"Priority {priority} Requirements:\n"
             unique_steps = list(dict.fromkeys(priority_groups[priority]))
-            for step in unique_steps:
-                requirements += f"- {step}\n"
-            requirements += "\n"
+            requirements += "\n".join(f"- {step}" for step in unique_steps)
+            requirements += "\n\n"
         
         return {
             'name': name,
@@ -318,135 +362,127 @@ def create_policy_from_rules(rules: List[Dict], document_id: int) -> Optional[Di
         }
         
     except Exception as e:
-        logger.error(f"Error creating policy from rules: {str(e)}")
-        return None
+        raise PolicyCreationError(f"Failed to create policy: {str(e)}") from e
 
-def process_document(document_id: int, file_path: str, max_retries: int = 3) -> None:
-    """Process a document and extract compliance rules with enhanced error handling and retries."""
-    session = db.session()
+def create_compliance_policy(policy_data: Dict[str, Any], session) -> None:
+    """
+    Create a compliance policy and its related category policies.
     
-    def get_document():
-        """Helper function to get document within the current session context."""
-        return session.query(ComplianceDocument).get(document_id)
-    
-    def update_status(document: ComplianceDocument, new_status: str, commit: bool = True) -> None:
-        """Helper function to update document status with proper error handling."""
-        try:
-            document.status = new_status
-            if commit:
-                session.commit()
-                session.refresh(document)
-            logger.info(f"Document {document.filename} status updated to: {new_status}")
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error updating document status: {str(e)}")
-            raise
-    
+    Args:
+        policy_data: Dictionary containing policy information
+        session: SQLAlchemy session
+        
+    Raises:
+        PolicyCreationError: If policy creation fails
+    """
     try:
-        document = get_document()
-        if not document:
-            raise ValueError(f"Document with ID {document_id} not found")
-
-        update_status(document, 'processing')
-        logger.info(f"Started processing document: {document.filename}")
+        policy = CompliancePolicy(
+            name=policy_data['name'],
+            category=policy_data['category'],
+            description=policy_data['description'],
+            requirements=policy_data['requirements'],
+            status='active'
+        )
+        session.add(policy)
+        session.flush()
         
-        # Step 1: Extract text from PDF (25%)
-        logger.info("Extracting text from PDF...")
-        text = extract_pdf_text(file_path)
-        document.content = text
-        update_status(document, 'processing_25')
-        
-        # Step 2: Process text and extract rules (50%)
-        logger.info("Processing text and extracting rules...")
-        processed_data = process_document_text(text)
-        document.processed_content = text
-        update_status(document, 'processing_50')
-        
-        # Step 3: Validate extracted rules (75%)
-        logger.info("Validating extracted rules...")
-        valid_rules = [rule for rule in processed_data['rules'] if validate_rule(rule)]
-        logger.info(f"Found {len(valid_rules)} valid rules out of {len(processed_data['rules'])} total rules")
-        update_status(document, 'processing_75')
-        
-        # Step 4: Create compliance rules and policy (100%)
-        logger.info("Creating compliance rules and policy...")
-        
-        # Use transaction for rules creation
-        try:
-            session.refresh(document)  # Ensure document is fresh in session
-            create_compliance_rules(document, valid_rules)
-            session.flush()  # Ensure rules are created before policy
-            session.refresh(document)  # Refresh after rules creation
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error creating compliance rules: {str(e)}")
-            raise
-        
-        # Policy creation with retry logic
-        retry_count = 0
-        policy_created = False
-        last_error = None
-        
-        while retry_count < max_retries and not policy_created:
-            try:
-                # Generate policy data with unique name
-                policy_data = create_policy_from_rules(valid_rules, document.id)
-                
-                if policy_data:
-                    # Start a nested transaction for policy creation
-                    with session.begin_nested():
-                        policy = CompliancePolicy(
-                            name=policy_data['name'],
-                            category=policy_data['category'],
-                            description=policy_data['description'],
-                            requirements=policy_data['requirements'],
-                            status='active'
-                        )
-                        session.add(policy)
-                        session.flush()
-                        policy_created = True
-                        logger.info(f"Created new compliance policy: {policy_data['name']}")
-                        
-                        # Create additional category policies if needed
-                        for additional_category in policy_data.get('additional_categories', []):
-                            category_policy = CompliancePolicy(
-                                name=f"{policy_data['name']}_{additional_category}",
-                                category=additional_category,
-                                description=policy_data['description'],
-                                requirements=policy_data['requirements'],
-                                status='active'
-                            )
-                            session.add(category_policy)
-                        
-                break  # Exit retry loop if successful
-                
-            except Exception as e:
-                session.rollback()
-                last_error = e
-                retry_count += 1
-                logger.warning(f"Policy creation attempt {retry_count} failed: {str(e)}")
-                if retry_count < max_retries:
-                    time.sleep(1)  # Add delay between retries
-        
-        if not policy_created:
-            logger.error(f"Failed to create policy after {max_retries} attempts. Last error: {str(last_error)}")
-            update_status(document, 'partial_success', commit=False)
-        else:
-            update_status(document, 'processed', commit=False)
-        
-        # Final commit for the entire transaction
-        session.commit()
-        session.refresh(document)  # Final refresh after all operations
-        logger.info(f"Successfully processed document: {document.filename}")
+        # Create additional category policies
+        for additional_category in policy_data.get('additional_categories', []):
+            category_policy = CompliancePolicy(
+                name=f"{policy_data['name']}_{additional_category}",
+                category=additional_category,
+                description=policy_data['description'],
+                requirements=policy_data['requirements'],
+                status='active'
+            )
+            session.add(category_policy)
+            
+        logger.info(f"Created new compliance policy: {policy_data['name']}")
         
     except Exception as e:
-        session.rollback()
-        # Get fresh document instance for error status update
-        error_doc = get_document()
-        if error_doc:
-            update_status(error_doc, 'error')
-        logger.error(f"Error processing document {document_id}: {str(e)}")
-        raise
+        raise PolicyCreationError(f"Failed to create policy in database: {str(e)}") from e
+
+def update_document_status(document: ComplianceDocument, status: str, session) -> None:
+    """
+    Update the status of a document.
+    
+    Args:
+        document: ComplianceDocument instance
+        status: New status value
+        session: SQLAlchemy session
+    """
+    document.status = status
+    session.flush()
+    logger.info(f"Document {document.filename} status updated to: {status}")
+
+def process_document(document_id: int, file_path: str) -> None:
+    """
+    Process a document and extract compliance rules.
+    
+    Args:
+        document_id: ID of the document to process
+        file_path: Path to the document file
         
-    finally:
-        session.close()
+    Raises:
+        DocumentProcessingError: If document processing fails
+    """
+    with db_transaction() as session:
+        try:
+            document = session.query(ComplianceDocument).get(document_id)
+            if not document:
+                raise DocumentProcessingError(f"Document with ID {document_id} not found")
+
+            update_document_status(document, 'processing', session)
+            logger.info(f"Started processing document: {document.filename}")
+            
+            # Extract and store text
+            text = extract_pdf_text(file_path)
+            document.content = text
+            update_document_status(document, 'processing_25', session)
+            
+            # Process text and extract rules
+            processed_data = process_document_text(text)
+            document.processed_content = text
+            update_document_status(document, 'processing_50', session)
+            
+            # Validate rules
+            valid_rules = [rule for rule in processed_data['rules'] if validate_rule(rule)]
+            logger.info(f"Found {len(valid_rules)} valid rules")
+            update_document_status(document, 'processing_75', session)
+            
+            # Create rules and policy
+            create_compliance_rules(document, valid_rules, session)
+            
+            policy_data = create_policy_from_rules(valid_rules, document.id)
+            if policy_data:
+                create_compliance_policy(policy_data, session)
+            
+            update_document_status(document, 'processed', session)
+            logger.info(f"Successfully processed document: {document.filename}")
+            
+        except Exception as e:
+            error_doc = session.query(ComplianceDocument).get(document_id)
+            if error_doc:
+                update_document_status(error_doc, 'error', session)
+            logger.error(f"Error processing document {document_id}: {str(e)}")
+            raise DocumentProcessingError(f"Document processing failed: {str(e)}") from e
+
+@retry_on_error(max_retries=3)
+def process_document_text(text: str) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Process document text using OpenAI to extract structured rules.
+    
+    Args:
+        text: Document text to process
+        
+    Returns:
+        Dict[str, List[Dict[str, Any]]]: Dictionary containing extracted rules
+        
+    Raises:
+        OpenAIProcessingError: If processing fails
+    """
+    client = get_openai_client()
+    response_data = make_openai_request(client, text)
+    validated_rules = [rule for rule in response_data.get('rules', []) if validate_rule(rule)]
+    logger.info(f"Successfully extracted {len(validated_rules)} valid rules")
+    return {'rules': validated_rules}
