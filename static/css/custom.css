@@ -145,15 +145,18 @@
 }
 
 #sidebarCollapse {
-    position: fixed;
-    left: 250px;
-    top: 70px;
-    z-index: 999;
-    transition: all 0.3s;
+    background: transparent;
+    border: none;
+    padding: 0;
 }
 
-#content.active #sidebarCollapse {
-    left: 15px;
+#sidebarCollapse:hover {
+    background: var(--bs-dark);
+}
+
+#sidebarCollapse .navbar-toggler-icon {
+    width: 1.25em;
+    height: 1.25em;
 }
 
 /* Footer styles */

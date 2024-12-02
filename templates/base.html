@@ -10,6 +10,11 @@
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
+            {% if current_user.is_authenticated %}
+            <button type="button" id="sidebarCollapse" class="btn btn-dark d-flex align-items-center me-3">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            {% endif %}
             <a class="navbar-brand d-flex align-items-center" href="/">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-shield me-2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
                 Access Management Bot
@@ -63,10 +68,7 @@
             </ul>
         </nav>
 
-        <!-- Sidebar Toggle Button -->
-        <button type="button" id="sidebarCollapse" class="btn btn-dark">
-            <span class="navbar-toggler-icon"></span>
-        </button>
+        
         {% endif %}
 
         <!-- Page Content -->
