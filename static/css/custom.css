@@ -148,6 +148,7 @@
     background: transparent;
     border: none;
     padding: 0;
+    margin-left: -1rem;
 }
 
 #sidebarCollapse:hover {
