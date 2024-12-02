@@ -1,34 +1,18 @@
-# Standard library imports
-import logging
 import os
+import logging
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash
 from functools import wraps
-from typing import Dict, List, Optional, Union
-
-# Third-party imports
-from flask import (
-    Flask, flash, jsonify, redirect, render_template,
-    request, session, url_for
-)
-from flask_login import (
-    LoginManager, current_user, login_required,
-    login_user, logout_user
-)
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import joinedload
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
-from werkzeug.utils import secure_filename
-
-# Local application imports
+from sqlalchemy.exc import SQLAlchemyError
 from chatbot import process_chat_message
 from database import db
+from models import User, CompliancePolicy, ComplianceRecord, ComplianceDocument
+from werkzeug.utils import secure_filename
 from document_processor import process_document
-from models import (
-    ComplianceDocument, CompliancePolicy,
-    ComplianceRecord, User
-)
 from policy_engine import evaluate_access_request
+from typing import Union, Optional
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -209,19 +193,8 @@ def update_user_role(user_id: int):
 
 @app.route('/integrations')
 @login_required
-def integrations() -> str:
-    """
-    Display the integrations management page.
-    
-    This page allows users to:
-    - View available system integrations
-    - Configure integration settings
-    - Monitor integration status
-    
-    Returns:
-        str: Rendered integrations template
-    """
-    logger.info(f"User {current_user.username} accessing integrations page")
+def integrations():
+    """Display integrations page."""
     return render_template('integrations.html')
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -295,96 +268,31 @@ def update_settings():
 
 @app.route('/compliance')
 @login_required
-def compliance() -> str:
-    """
-    Display compliance dashboard with statistics and documents.
+def compliance():
+    """Display compliance dashboard with statistics and documents."""
+    stats = {
+        'total_documents': ComplianceDocument.query.count(),
+        'active_policies': CompliancePolicy.query.filter_by(status='active').count(),
+        'pending_reviews': ComplianceRecord.query.filter_by(status='pending_review').count()
+    }
     
-    This route shows:
-    - Overall compliance statistics
-    - Document processing status
-    - Active policies
-    - Recent compliance records
+    # Calculate compliance rate
+    total_records = ComplianceRecord.query.count()
+    compliant_records = ComplianceRecord.query.filter_by(status='compliant').count()
+    stats['compliance_rate'] = round((compliant_records / total_records * 100) if total_records > 0 else 0)
     
-    The dashboard uses optimized queries with proper indexing hints
-    and eager loading of related data for performance.
+    # Get documents and their processing status
+    documents = ComplianceDocument.query.order_by(ComplianceDocument.upload_date.desc()).all()
     
-    Returns:
-        str: Rendered compliance dashboard template
-    """
-    try:
-        # Use select statements with indexing hints
-        docs_stmt = (
-            select(ComplianceDocument)
-            .options(joinedload(ComplianceDocument.user))
-            .order_by(ComplianceDocument.upload_date.desc())
-        )
-        
-        policies_stmt = (
-            select(CompliancePolicy)
-            .filter_by(status='active')
-            .options(joinedload(CompliancePolicy.records))
-            .order_by(CompliancePolicy.updated_at.desc())
-        )
-        
-        records_stmt = (
-            select(ComplianceRecord)
-            .options(
-                joinedload(ComplianceRecord.policy),
-                joinedload(ComplianceRecord.user),
-                joinedload(ComplianceRecord.resource)
-            )
-            .order_by(ComplianceRecord.updated_at.desc())
-            .limit(10)
-        )
-        
-        # Execute queries efficiently
-        stats = {
-            'total_documents': db.session.scalar(
-                select(db.func.count()).select_from(ComplianceDocument)
-            ),
-            'active_policies': db.session.scalar(
-                select(db.func.count())
-                .select_from(CompliancePolicy)
-                .filter_by(status='active')
-            ),
-            'pending_reviews': db.session.scalar(
-                select(db.func.count())
-                .select_from(ComplianceRecord)
-                .filter_by(status='pending_review')
-            )
-        }
-        
-        # Calculate compliance rate efficiently
-        total_records = db.session.scalar(
-            select(db.func.count()).select_from(ComplianceRecord)
-        )
-        compliant_records = db.session.scalar(
-            select(db.func.count())
-            .select_from(ComplianceRecord)
-            .filter_by(status='compliant')
-        )
-        
-        stats['compliance_rate'] = round(
-            (compliant_records / total_records * 100)
-            if total_records > 0 else 0
-        )
-        
-        documents = db.session.scalars(docs_stmt).all()
-        policies = db.session.scalars(policies_stmt).all()
-        records = db.session.scalars(records_stmt).all()
-        
-        return render_template(
-            'compliance.html',
-            stats=stats,
-            policies=policies,
-            documents=documents,
-            records=records
-        )
-        
-    except SQLAlchemyError as e:
-        logger.error(f"Database error in compliance dashboard: {str(e)}")
-        flash('Error loading compliance data', 'danger')
-        return render_template('compliance.html', error=True)
+    # Get policies and recent records
+    policies = CompliancePolicy.query.order_by(CompliancePolicy.updated_at.desc()).all()
+    records = ComplianceRecord.query.order_by(ComplianceRecord.updated_at.desc()).limit(10).all()
+    
+    return render_template('compliance.html',
+                         stats=stats,
+                         policies=policies,
+                         documents=documents,
+                         records=records)
 
 @app.route('/compliance/policy', methods=['POST'])
 @login_required
@@ -550,22 +458,8 @@ def get_document_rules(doc_id: int):
 
 @app.route('/api/chat', methods=['POST'])
 @login_required
-def chat() -> tuple[dict, int]:
-    """
-    Handle chat API requests with access control evaluation.
-    
-    This endpoint processes chat messages and evaluates access control
-    requests if present in the chatbot's response.
-    
-    Returns:
-        tuple[dict, int]: JSON response and HTTP status code
-            Success: {'message': str, 'access_decision': dict}
-            Error: {'error': str}, status_code
-            
-    Raises:
-        400: If request is not JSON or missing message
-        500: If message processing fails
-    """
+def chat():
+    """Handle chat API requests with access control evaluation."""
     if not request.is_json:
         return jsonify({'error': 'Content-Type must be application/json'}), 400
         
@@ -574,7 +468,6 @@ def chat() -> tuple[dict, int]:
         return jsonify({'error': 'No message provided'}), 400
         
     message = data['message']
-    logger.info(f"Processing chat message for user {current_user.username}")
 
     try:
         # Process message through chatbot
@@ -582,7 +475,6 @@ def chat() -> tuple[dict, int]:
         
         # Evaluate access request if present
         if 'access_request' in response:
-            logger.info("Evaluating access request in chat response")
             access_decision = evaluate_access_request(
                 current_user.id,
                 response['access_request']['resource'],
@@ -590,9 +482,8 @@ def chat() -> tuple[dict, int]:
             )
             response['access_decision'] = access_decision
         
-        return jsonify(response), 200
+        return jsonify(response)
     except Exception as e:
-        logger.error(f"Error processing chat message: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 with app.app_context():
