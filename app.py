@@ -629,6 +629,36 @@ def get_document_rules(doc_id: int):
     return jsonify({'rules': rules_data})
 
 @app.route('/api/chat', methods=['POST'])
+@login_required
+def chat():
+    """Handle chat API requests with access control evaluation."""
+    if not request.is_json:
+        return jsonify({'error': 'Content-Type must be application/json'}), 400
+        
+    data = request.get_json()
+    if not data or 'message' not in data:
+        return jsonify({'error': 'No message provided'}), 400
+        
+    message = data['message']
+
+    try:
+        # Process message through chatbot
+        response = process_chat_message(message, current_user)
+        
+        # Evaluate access request if present
+        if 'access_request' in response:
+            access_decision = evaluate_access_request(
+                current_user.id,
+                response['access_request']['resource'],
+                response['access_request']['action']
+            )
+            response['access_decision'] = access_decision
+        
+        return jsonify(response)
+    except Exception as e:
+        logger.error(f"Chat endpoint error: {str(e)}")
+        return jsonify({'error': 'An error occurred processing your request'}), 500
+
 @app.route('/access-dashboard')
 @login_required
 def access_dashboard():
@@ -741,6 +771,30 @@ with app.app_context():
         
         db.create_all()
         logger.info("Database tables created successfully")
+        
+        # Initialize Neo4j connection and create User label if not exists
+        try:
+            with neo4j.GraphDatabase.driver(
+                os.environ.get('NEO4J_URI'),
+                auth=(os.environ.get('NEO4J_USER'), os.environ.get('NEO4J_PASSWORD'))
+            ) as driver:
+                with driver.session() as session:
+                    # Create User label constraints
+                    session.run("""
+                        CREATE CONSTRAINT user_id IF NOT EXISTS
+                        FOR (u:User) REQUIRE u.id IS UNIQUE
+                    """)
+                    
+                    # Ensure admin user exists in Neo4j
+                    session.run("""
+                        MERGE (u:User {id: $user_id})
+                        SET u.username = $username,
+                            u.role = $role
+                    """, user_id=1, username='admin69!', role='admin')
+                    
+            logger.info("Neo4j database initialized successfully")
+        except Exception as e:
+            logger.error(f"Neo4j initialization error: {str(e)}")
         
         # Create admin user if it doesn't exist
         admin_user = User.query.filter_by(username='admin69!').first()
