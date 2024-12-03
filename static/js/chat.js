@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
+    }rr
 
     function displayAccessDecision(decision) {
         const messageDiv = document.createElement('div');

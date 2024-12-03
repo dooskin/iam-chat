@@ -428,48 +428,38 @@ h2 { font-size: var(--font-size-lg); }
     margin-bottom: 120px;
 }
 
-/* Enhanced Chat Interface */
+/* Chat Interface */
 .chat-container {
-    background: linear-gradient(to bottom, var(--chat-bg), rgba(42, 45, 62, 0.95));
-    border-radius: 16px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
-    margin: 1.5rem auto;
-    padding: 1.5rem;
+    background: var(--bs-dark);
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin: 1rem auto;
+    padding: 1rem;
 }
 
 .chat-messages {
-    padding: 1.5rem;
+    padding: 1rem;
     margin: 0.5rem 0;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    background: var(--bs-dark);
 }
 
 .chat-input-container {
-    background: rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(8px);
-    border-radius: 12px;
-    padding: 1.25rem;
+    background: var(--bs-dark);
+    border-radius: 8px;
+    padding: 1rem;
     margin-top: 1rem;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    transition: all 0.3s ease;
+    border: 1px solid var(--bs-secondary);
+    transition: all 0.2s ease;
 }
 
 .chat-input-container:focus-within {
     border-color: var(--bs-primary);
-    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
-    transform: translateY(-2px);
 }
 
-/* Logo and Brand Enhancement */
+/* Navbar Brand */
 .navbar-brand {
-    font-weight: var(--font-weight-bold);
-    letter-spacing: 0.5px;
-    transition: all 0.3s ease;
-}
-
-.navbar-brand:hover {
-    transform: translateY(-1px);
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    font-weight: var(--font-weight-medium);
 }
 /* Message animations */
 @keyframes messageAppear {
