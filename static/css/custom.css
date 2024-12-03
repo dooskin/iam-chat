@@ -358,38 +358,13 @@ h2 { font-size: var(--font-size-lg); }
 }
 
 .sidebar ul li a {
-    padding: 12px 24px;
+    padding: 10px 20px;
     font-size: 1.1em;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     color: var(--bs-light);
     text-decoration: none;
-    border-radius: 8px;
-    margin: 4px 12px;
-    transition: all 0.3s ease;
-    position: relative;
-    overflow: hidden;
-}
-
-.sidebar ul li a::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 4px;
-    height: 100%;
-    background: var(--bs-primary);
-    transform: scaleY(0);
-    transition: transform 0.3s ease;
-}
-
-.sidebar ul li a:hover::before {
-    transform: scaleY(1);
-}
-
-.sidebar ul li.active a::before {
-    transform: scaleY(1);
 }
 
 .sidebar ul li a:hover {
