@@ -176,12 +176,13 @@ body {
     transform: translateY(-50%);
     background: var(--kaspian-dark);
     color: var(--bs-light);
-    padding: 0.5rem 1rem;
+    padding: 0.75rem 1.25rem;
     border-radius: 0.5rem;
-    font-size: var(--text-sm);
+    font-size: var(--text-base);
     white-space: nowrap;
     z-index: 1000;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+    margin-left: 0.75rem;
 }
 
 /* Responsive Design */
@@ -228,5 +229,79 @@ body {
     background: var(--kaspian-dark) !important;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     padding: 1rem 0;
+/* Login Page Styles */
+.login-container {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 2rem;
+    background: var(--kaspian-dark);
+    position: relative;
+}
+
+.login-brand {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.login-brand .brand-icon {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 1rem;
+    color: var(--kaspian-primary);
+}
+
+.login-brand .brand-text {
+    font-size: var(--text-2xl);
+    margin: 0;
+    background: linear-gradient(135deg, var(--kaspian-primary), var(--kaspian-accent));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 700;
+}
+
+.login-card {
+    width: 100%;
+    max-width: 400px;
+}
+
+.login-card .card {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.login-card .card-body {
+    padding: 2rem;
+}
+
+.login-card .form-control {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--bs-light);
+}
+
+.login-card .form-control:focus {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--kaspian-primary);
+    box-shadow: 0 0 0 0.25rem rgba(99, 102, 241, 0.25);
+}
+
+.login-card .btn-primary {
+    background: linear-gradient(135deg, var(--kaspian-primary), var(--kaspian-secondary));
+    border: none;
+    padding: 0.75rem;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.login-card .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+}
     z-index: 1020;
 }
