@@ -52,15 +52,15 @@
             </div>
             <ul class="list-unstyled components">
                 <li {% if request.endpoint == 'index' %}class="active"{% endif %}>
-                    <a href="{{ url_for('index') }}" class="nav-link">
+                    <a href="{{ url_for('index') }}" class="nav-link" data-tooltip="Access the AI chat interface">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-message-square"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                        Main Chatbot
+                        <span class="nav-text">Main Chatbot</span>
                     </a>
                 </li>
                 <li {% if request.endpoint == 'integrations' %}class="active"{% endif %}>
-                    <a href="{{ url_for('integrations') }}" class="nav-link">
+                    <a href="{{ url_for('integrations') }}" class="nav-link" data-tooltip="Manage external service connections">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-box"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
-                        Integrations
+                        <span class="nav-text">Integrations</span>
                     </a>
                 </li>
                 <li {% if request.endpoint == 'compliance' %}class="active"{% endif %}>
