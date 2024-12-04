@@ -7,10 +7,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${type}`;
         messageDiv.textContent = content;
-        
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
-    }rr
+    }
 
     function displayAccessDecision(decision) {
         const messageDiv = document.createElement('div');
