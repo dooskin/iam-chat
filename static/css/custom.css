@@ -134,11 +134,31 @@ body {
     background: var(--kaspian-dark) !important;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     height: 56px;
+    padding: 0.5rem 1rem;
 }
 
 .navbar-brand {
     font-weight: 600;
-    font-size: var(--text-xl);
+    font-size: var(--text-lg);
+    padding: 0.25rem 0;
+    margin-right: 1.5rem;
+}
+
+.navbar .nav-link {
+    padding: 0.5rem 1rem;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--bs-light) !important;
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+}
+
+.navbar .nav-link:hover {
+    opacity: 1;
+}
+
+.navbar .navbar-nav {
+    gap: 0.5rem;
 }
 
 .brand-text {
@@ -265,24 +285,42 @@ body {
 
 .login-card {
     width: 100%;
-    max-width: 400px;
+    max-width: 320px;
 }
 
 .login-card .card {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.03);
     backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
 .login-card .card-body {
-    padding: 2rem;
+    padding: 1.25rem;
+}
+
+.login-card .card-title {
+    font-size: var(--text-xl);
+    font-weight: 500;
+    margin-bottom: 1.5rem;
+    color: var(--bs-light);
+}
+
+.login-card .form-label {
+    font-size: var(--text-sm);
+    margin-bottom: 0.375rem;
+    color: var(--bs-light);
+    opacity: 0.9;
 }
 
 .login-card .form-control {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     color: var(--bs-light);
+    height: 36px;
+    font-size: 13px;
+    padding: 0.375rem 0.75rem;
+    transition: all 0.2s ease;
 }
 
 .login-card .form-control:focus {
