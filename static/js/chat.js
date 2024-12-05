@@ -8,11 +8,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const responseCache = new Map();
     const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 
+    const messagesContainer = document.getElementById('messagesContainer');
+
     function addMessage(content, type) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${type}`;
         messageDiv.textContent = content;
-        chatMessages.appendChild(messageDiv);
+        messagesContainer.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
@@ -20,7 +22,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message access-decision ${decision.allowed ? 'allowed' : 'denied'}`;
         messageDiv.textContent = decision.reason;
-        chatMessages.appendChild(messageDiv);
+        messagesContainer.appendChild(messageDiv);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
     function showTypingIndicator() {

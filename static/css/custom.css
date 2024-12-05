@@ -251,6 +251,17 @@ body {
     color: var(--bs-light);
 }
 
+.chat-messages {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+#messagesContainer {
+    flex-grow: 1;
+    overflow-y: auto;
+}
+
 .typing-indicator {
     background-color: var(--bs-secondary);
     border-radius: 8px;
@@ -259,6 +270,10 @@ body {
     margin-right: auto;
     max-width: 80%;
     display: none;
+    position: sticky;
+    bottom: 0;
+    left: 0;
+    z-index: 1;
 }
 
 .typing-indicator span {
