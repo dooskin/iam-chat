@@ -2,6 +2,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const chatForm = document.getElementById('chatForm');
     const messageInput = document.getElementById('messageInput');
     const chatMessages = document.getElementById('chatMessages');
+    const typingIndicator = document.getElementById('typingIndicator');
+    
+    // Initialize cache
+    const responseCache = new Map();
+    const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 
     function addMessage(content, type) {
         const messageDiv = document.createElement('div');
@@ -18,6 +23,35 @@ document.addEventListener('DOMContentLoaded', function() {
         chatMessages.appendChild(messageDiv);
     }
 
+    function showTypingIndicator() {
+        typingIndicator.style.display = 'block';
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function hideTypingIndicator() {
+        typingIndicator.style.display = 'none';
+    }
+
+    function getCachedResponse(message) {
+        const cached = responseCache.get(message);
+        if (!cached) return null;
+        
+        // Check if cache is still valid
+        if (Date.now() - cached.timestamp > CACHE_DURATION) {
+            responseCache.delete(message);
+            return null;
+        }
+        
+        return cached.data;
+    }
+
+    function cacheResponse(message, data) {
+        responseCache.set(message, {
+            data: data,
+            timestamp: Date.now()
+        });
+    }
+
     chatForm.addEventListener('submit', async function(e) {
         e.preventDefault();
         
@@ -29,6 +63,21 @@ document.addEventListener('DOMContentLoaded', function() {
         messageInput.value = '';
 
         try {
+            // Check cache first
+            const cachedResponse = getCachedResponse(message);
+            if (cachedResponse) {
+                if (cachedResponse.message) {
+                    addMessage(cachedResponse.message, 'bot');
+                }
+                if (cachedResponse.access_decision) {
+                    displayAccessDecision(cachedResponse.access_decision);
+                }
+                return;
+            }
+
+            // Show typing indicator before fetch
+            showTypingIndicator();
+
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: {
@@ -43,6 +92,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const data = await response.json();
             
+            // Hide typing indicator after receiving response
+            hideTypingIndicator();
+            
+            // Cache the response
+            cacheResponse(message, data);
+            
             // Add bot response to chat
             if (data.message) {
                 addMessage(data.message, 'bot');
@@ -54,7 +109,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
         } catch (error) {
+            hideTypingIndicator();
             addMessage('Sorry, there was an error processing your request.', 'error');
         }
     });
+
+    // Hide typing indicator initially
+    hideTypingIndicator();
 });
