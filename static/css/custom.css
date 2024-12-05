@@ -1,10 +1,13 @@
 .chat-container {
-    height: calc(100vh - 150px);
+    height: calc(100vh - 250px);  /* Increased space for header and footer */
     display: flex;
     flex-direction: column;
     background: var(--bs-dark);
     border-radius: 8px;
     overflow: hidden;
+    margin: 1rem auto;  /* Center the container */
+    max-width: 1200px;  /* Maximum width */
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
 .chat-messages {
@@ -37,9 +40,14 @@
 }
 
 .message.system {
-    background: var(--bs-info);
-    margin: 0 auto;
+    background: linear-gradient(135deg, var(--kaspian-primary), var(--kaspian-accent));
+    margin: 1rem auto;
     text-align: center;
+    color: white;
+    padding: 1rem;
+    border-radius: 12px;
+    max-width: 90%;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .message.access-decision {
