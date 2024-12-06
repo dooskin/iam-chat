@@ -58,18 +58,17 @@
 }
 
 .typing-indicator {
-    position: fixed;
-    bottom: calc(80px + 70px); /* Footer + input container height */
-    width: inherit;
-    max-width: inherit;
+    position: absolute;
+    bottom: 160px; /* Adjusted position above input */
+    left: 20px;
     background-color: var(--bs-secondary);
     border-radius: 8px;
     padding: 0.75rem;
     margin-bottom: 0.5rem;
     margin-right: auto;
-    max-width: 80%;
+    max-width: 80px;
     display: none;
-    z-index: 5;
+    z-index: 100;
 }
 
 .typing-indicator span {
