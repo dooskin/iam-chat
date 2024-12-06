@@ -1,6 +1,6 @@
 .chat-container {
     position: relative;
-    height: calc(100vh - 180px);
+    height: calc(100vh - 240px); /* Adjusted to account for footer and padding */
     display: flex;
     flex-direction: column;
     background: var(--bs-dark);
@@ -15,6 +15,7 @@
     flex: 1 1 auto;
     overflow-y: auto;
     padding: 1rem;
+    padding-bottom: 90px; /* Space for input container */
     display: flex;
     flex-direction: column;
 }
@@ -28,13 +29,57 @@
 }
 
 .chat-input-container {
-    position: sticky;
-    bottom: 0;
-    padding: 1rem;
+    position: fixed;
+    bottom: 80px; /* Footer height */
+    width: inherit;
+    max-width: inherit;
     background: var(--bs-dark);
+    padding: 1rem;
     border-top: 1px solid var(--bs-secondary);
-    margin-top: auto;
     z-index: 10;
+}
+
+.typing-indicator {
+    position: fixed;
+    bottom: calc(80px + 70px); /* Footer + input container height */
+    width: inherit;
+    max-width: inherit;
+    background-color: var(--bs-secondary);
+    border-radius: 8px;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    margin-right: auto;
+    max-width: 80%;
+    display: none;
+    z-index: 5;
+}
+
+.typing-indicator span {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background-color: var(--bs-light);
+    border-radius: 50%;
+    margin-right: 3px;
+    animation: typing 1s infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+    animation-delay: 0.4s;
+    margin-right: 0;
+}
+
+@keyframes typing {
+    0%, 100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-5px);
+    }
 }
 
 .message {
@@ -83,47 +128,6 @@
     background: var(--bs-danger);
     margin: 0 auto;
     text-align: center;
-}
-
-.typing-indicator {
-    background-color: var(--bs-secondary);
-    border-radius: 8px;
-    padding: 0.75rem;
-    margin-bottom: 0.5rem;
-    margin-right: auto;
-    max-width: 80%;
-    display: none;
-    position: sticky;
-    bottom: 0;
-    z-index: 5;
-}
-
-.typing-indicator span {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    background-color: var(--bs-light);
-    border-radius: 50%;
-    margin-right: 3px;
-    animation: typing 1s infinite;
-}
-
-.typing-indicator span:nth-child(2) {
-    animation-delay: 0.2s;
-}
-
-.typing-indicator span:nth-child(3) {
-    animation-delay: 0.4s;
-    margin-right: 0;
-}
-
-@keyframes typing {
-    0%, 100% {
-        transform: translateY(0);
-    }
-    50% {
-        transform: translateY(-5px);
-    }
 }
 
 /* Sidebar styles */
