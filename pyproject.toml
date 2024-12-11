@@ -15,7 +15,6 @@ dependencies = [
     "sqlalchemy",
     "google-cloud-core>=2.4.1",
     "google-auth>=2.36.0",
-    "pdfminer-six>=20240706",
     "spacy>=3.8.2",
     "pytesseract>=0.3.13",
     "python-magic>=0.4.27",
@@ -23,6 +22,9 @@ dependencies = [
     "google-api-python-client",
     "neo4j",
     "google-cloud-asset",
-    "pdfminer>=20191125",
     "sift-stack-py>=0.2.2",
+    "google-cloud-resource-manager",
+    "google-cloud-iam",
+    "pypdf2>=3.0.1",
+    "pdfminer>=20191125",
 ]

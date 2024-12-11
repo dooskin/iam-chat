@@ -173,20 +173,28 @@ class GCPConnector:
             return {"error": str(e)}
 
     def _store_iam_data(self, iam_data: Dict[str, Any]) -> None:
-        """Store IAM data in Neo4j using GraphSchema."""
+        """Store IAM data in Neo4j using GraphSchema with enhanced Cartography compatibility."""
         try:
             project_id = iam_data['metadata']['projectId']
             
-            # Create project node
-            self.graph.create_or_update_asset({
+            # Create project node with Cartography metadata
+            project_data = {
                 'id': f"project_{project_id}",
                 'name': project_id,
                 'type': 'GCPProject',
                 'platform': 'GCP',
-                'metadata': iam_data['metadata']
-            })
+                'metadata': {
+                    **iam_data['metadata'],
+                    'resource_type': 'cloudresourcemanager.googleapis.com/Project',
+                    'asset_type': 'google.cloud.Project'
+                },
+                'environment': 'production',
+                'tags': ['gcp', 'project'],
+                'relationships': []
+            }
+            self.graph.create_or_update_asset(project_data)
             
-            # Process service accounts
+            # Process service accounts with enhanced metadata
             for sa in iam_data['serviceAccounts']:
                 sa_data = {
                     'id': sa['uniqueId'],
@@ -197,12 +205,29 @@ class GCPConnector:
                     'metadata': {
                         'projectId': project_id,
                         'disabled': sa.get('disabled', False),
-                        'oauth2ClientId': sa.get('oauth2ClientId', '')
-                    }
+                        'oauth2ClientId': sa.get('oauth2ClientId', ''),
+                        'resource_type': 'iam.googleapis.com/ServiceAccount',
+                        'asset_type': 'google.cloud.ServiceAccount',
+                        'email_address': sa['email'],
+                        'unique_id': sa['uniqueId']
+                    },
+                    'environment': 'production',
+                    'tags': ['gcp', 'service-account'],
+                    'relationships': [{
+                        'target_id': f"project_{project_id}",
+                        'type': 'BELONGS_TO'
+                    }]
                 }
                 self.graph.create_or_update_asset(sa_data)
+                
+                # Create embeddings for service account metadata
+                self.graph.create_node_embedding(
+                    sa_data['id'],
+                    'ServiceAccount',
+                    f"Service Account {sa_data['name']} ({sa_data['email']}) in project {project_id}"
+                )
             
-            # Process IAM policies
+            # Process IAM policies with enhanced relationship mapping
             for binding in iam_data['policies']:
                 role_name = binding['role'].split('/')[-1]
                 role_data = {
@@ -212,15 +237,43 @@ class GCPConnector:
                     'platform': 'GCP',
                     'metadata': {
                         'fullPath': binding['role'],
-                        'members': binding['members']
-                    }
+                        'members': binding['members'],
+                        'resource_type': 'iam.googleapis.com/Role',
+                        'asset_type': 'google.cloud.Role'
+                    },
+                    'environment': 'production',
+                    'tags': ['gcp', 'iam', 'role'],
+                    'relationships': [{
+                        'target_id': f"project_{project_id}",
+                        'type': 'BELONGS_TO'
+                    }]
                 }
                 self.graph.create_or_update_asset(role_data)
+                
+                # Create embeddings for role metadata
+                self.graph.create_node_embedding(
+                    role_data['id'],
+                    'Role',
+                    f"IAM Role {role_data['name']} in project {project_id} with members {', '.join(binding['members'])}"
+                )
+                
+                # Process role bindings and create relationships
+                for member in binding['members']:
+                    member_type, member_id = member.split(':')
+                    if member_type == 'serviceAccount':
+                        # Create relationship between role and service account
+                        rel_data = {
+                            'source_id': role_data['id'],
+                            'target_id': member_id.split('@')[0],  # Extract SA unique ID
+                            'type': 'HAS_ACCESS'
+                        }
+                        role_data['relationships'].append(rel_data)
             
-            logger.info(f"Successfully stored IAM data for project {project_id}")
+            logger.info(f"Successfully stored IAM data for project {project_id} with enhanced Cartography compatibility")
             
         except Exception as e:
             logger.error(f"Error storing IAM data: {str(e)}")
+            logger.error("Stack trace:", exc_info=True)
             raise
 
     def close(self):

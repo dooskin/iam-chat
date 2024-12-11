@@ -8,21 +8,40 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def test_neo4j_connection():
-    """Test Neo4j connection and schema initialization."""
+    """Test Neo4j connection, schema initialization, and validation."""
     try:
         # Initialize GraphSchema
         logger.info("Initializing Graph Schema...")
         graph = GraphSchema()
         
-        # Test connection
+        # Test connection with retry logic
         logger.info("Testing Neo4j connection...")
-        if not graph.test_connection():
-            raise Exception("Failed to connect to Neo4j database")
+        retry_count = 0
+        max_retries = 3
         
-        # Test schema initialization
+        while retry_count < max_retries:
+            try:
+                if graph.test_connection():
+                    logger.info("Successfully connected to Neo4j")
+                    break
+                retry_count += 1
+                if retry_count == max_retries:
+                    raise Exception("Failed to establish Neo4j connection after multiple attempts")
+                logger.warning(f"Connection attempt {retry_count} failed. Retrying...")
+                import time
+                time.sleep(2 ** retry_count)  # Exponential backoff
+            except Exception as e:
+                logger.error(f"Connection attempt {retry_count} failed: {str(e)}")
+                raise
+        
+        # Initialize and validate schema
         logger.info("Initializing schema...")
         graph.init_schema()
-        logger.info("Successfully initialized Neo4j schema")
+        
+        logger.info("Validating schema...")
+        if not graph.validate_schema():
+            raise Exception("Schema validation failed. Check logs for details.")
+        logger.info("Schema validation successful")
         
         # Test basic operations
         test_data = {
