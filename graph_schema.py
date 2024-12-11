@@ -29,7 +29,7 @@ class GraphSchema:
         try:
             # Get configuration from environment with explicit defaults from .env
             self.uri = os.getenv('NEO4J_URI')
-            self.user = os.getenv('NEO4J_USER')  # Using the exact name from .env file
+            self.user = os.getenv('NEO4J_USERNAME')  # Using the exact name from .env file
             self.password = os.getenv('NEO4J_PASSWORD')
             
             # Validate configuration

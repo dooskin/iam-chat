@@ -15,53 +15,42 @@ class VectorStore:
     def __init__(self):
         """Initialize Pinecone client and OpenAI for embeddings."""
         try:
-            # Initialize Pinecone with API key and proper error handling
+            # Initialize Pinecone with API key
             api_key = os.getenv('PINECONE_API_KEY')
             if not api_key:
                 raise ValueError("PINECONE_API_KEY environment variable is required")
             
-            try:
-                self.pc = Pinecone(api_key=api_key)
-                logger.info("Successfully initialized Pinecone client")
-                
-                # Initialize OpenAI client
-                self.openai = OpenAI()
-                logger.info("Successfully initialized OpenAI client")
-                
-                # Get or create serverless index with retry logic
-                self.index_name = "graph-rag-index"
-                self.dimension = 1536  # OpenAI embedding dimension
-                
-                retry_count = 0
-                max_retries = 3
-                while retry_count < max_retries:
-                    try:
-                        # List existing indexes
-                        indexes = self.pc.list_indexes()
-                        
-                        # Create serverless index if it doesn't exist
-                        if not any(index.name == self.index_name for index in indexes):
-                            self.pc.create_index(
-                                name=self.index_name,
-                                dimension=self.dimension,
-                                metric="cosine",
-                                spec=ServerlessSpec(
-                                    cloud="aws",
-                                    region="us-east-1"  # Using us-east-1 for free tier compatibility
-                                )
-                            )
-                            logger.info(f"Created new serverless index: {self.index_name}")
-                        break
-                    except Exception as e:
-                        retry_count += 1
-                        if retry_count == max_retries:
-                            raise Exception(f"Failed to create/verify index after {max_retries} attempts: {str(e)}")
-                        logger.warning(f"Attempt {retry_count} failed, retrying... Error: {str(e)}")
-                        import time
-                        time.sleep(2 ** retry_count)  # Exponential backoff
+            # Initialize Pinecone client with latest API
+            self.pc = Pinecone(api_key=api_key)
+            logger.info("Successfully initialized Pinecone client")
             
-            # Connect to index
-            self.index = self.pc.Index(self.index_name)
+            # Initialize OpenAI client
+            self.openai = OpenAI()
+            logger.info("Successfully initialized OpenAI client")
+            
+            # Define index configuration
+            self.index_name = "graph-rag-index"
+            self.dimension = 1536  # OpenAI embedding dimension
+            
+            try:
+                # List existing indexes
+                indexes = self.pc.list_indexes()
+                
+                # Create serverless index if it doesn't exist
+                if not any(index.name == self.index_name for index in indexes):
+                    self.pc.create_index(
+                        name=self.index_name,
+                        dimension=self.dimension,
+                        metric="cosine",
+                        spec=ServerlessSpec(
+                            cloud="aws",
+                            region="us-east-1"  # Required for free tier
+                        )
+                    )
+                    logger.info(f"Created new serverless index: {self.index_name}")
+            
+            # Connect to index using latest API
+            self.index = self.pc.Index(name=self.index_name)
             logger.info("Vector store initialized successfully")
             
         except Exception as e:
