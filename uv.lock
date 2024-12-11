@@ -1162,6 +1162,62 @@ wheels = [
 ]
 
 [[package]]
+name = "pinecone"
+version = "5.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "pinecone-plugin-inference" },
+    { name = "pinecone-plugin-interface" },
+    { name = "python-dateutil" },
+    { name = "tqdm" },
+    { name = "typing-extensions" },
+    { name = "urllib3", marker = "python_full_version < '4.0'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/57/db/893487b2eb62047554f5144bf3fc392db96f1cf032c7733a94723cfdf83b/pinecone-5.3.1.tar.gz", hash = "sha256:a216630331753958f4ebcdc6e6d473402d17152f2194af3e19b3416c73b0dcc4", size = 184679 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/93/0e5ac058c470b04d9e481d69813c1c26148bb2336e85ca0ff787f1fa0fbf/pinecone-5.3.1-py3-none-any.whl", hash = "sha256:dd180963d29cd648f2d58becf18b21f150362aef80446dd3a7ed15cbe85bb4c7", size = 419836 },
+]
+
+[[package]]
+name = "pinecone-client"
+version = "5.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "pinecone-plugin-inference" },
+    { name = "pinecone-plugin-interface" },
+    { name = "tqdm" },
+    { name = "typing-extensions" },
+    { name = "urllib3", marker = "python_full_version < '4.0'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/98/a4/739fe0a4a173658d541206ec7fdb0cc4c9ddc364de216af668b988bf0868/pinecone_client-5.0.1.tar.gz", hash = "sha256:11c33ff5d1c38a6ce69e69fe532c0f22f312fb28d761bb30b3767816d3181d64", size = 122207 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/d0/c64336b8f76e63296d04b885c545c0872ff070e6b2bc725dd0ff3ae681dc/pinecone_client-5.0.1-py3-none-any.whl", hash = "sha256:c8f7835e1045ba84e295f217a8e85573ffb80b41501bbc1af6d92c9631c567a7", size = 244818 },
+]
+
+[[package]]
+name = "pinecone-plugin-inference"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pinecone-plugin-interface" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/03/96/a5738492f131166eb2f9e99fb15a724cf482192e8443bf7069809485432b/pinecone_plugin_inference-1.1.0.tar.gz", hash = "sha256:283e5ae4590b901bf2179beb56fc3d1b715e63582f37ec7abb0708cf70912d1f", size = 48997 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/5e/a7eb453cfb3aa9c8c995a1dca5fcf57f79b67400593d5c6759571567e30c/pinecone_plugin_inference-1.1.0-py3-none-any.whl", hash = "sha256:32c61aba21c9a28fdcd0e782204c1ca641aeb3fd6e42764fbf0de8186eb657ec", size = 85353 },
+]
+
+[[package]]
+name = "pinecone-plugin-interface"
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/fb/e8a4063264953ead9e2b24d9b390152c60f042c951c47f4592e9996e57ff/pinecone_plugin_interface-0.0.7.tar.gz", hash = "sha256:b8e6675e41847333aa13923cc44daa3f85676d7157324682dc1640588a982846", size = 3370 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/1d/a21fdfcd6d022cb64cef5c2a29ee6691c6c103c4566b41646b080b7536a5/pinecone_plugin_interface-0.0.7-py3-none-any.whl", hash = "sha256:875857ad9c9fc8bbc074dbe780d187a2afd21f5bfe0f3b08601924a61ef1bba8", size = 6249 },
+]
+
+[[package]]
 name = "portalocker"
 version = "2.10.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1540,6 +1596,8 @@ dependencies = [
     { name = "numpy" },
     { name = "openai" },
     { name = "pdfminer" },
+    { name = "pinecone" },
+    { name = "pinecone-client" },
     { name = "psycopg2-binary" },
     { name = "pypdf2" },
     { name = "pytesseract" },
@@ -1571,6 +1629,8 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0.2" },
     { name = "openai", specifier = ">=1.55.0" },
     { name = "pdfminer", specifier = ">=20191125" },
+    { name = "pinecone" },
+    { name = "pinecone-client", specifier = ">=5.0.1" },
     { name = "psycopg2-binary", specifier = ">=2.9.10" },
     { name = "pypdf2", specifier = ">=3.0.1" },
     { name = "pytesseract", specifier = ">=0.3.13" },

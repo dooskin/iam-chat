@@ -69,8 +69,8 @@ def test_graph_rag_system():
             context = graph.get_graph_context(
                 query=query,
                 limit=5,
-                min_similarity=0.6,
-                max_hops=2
+                max_hops=2,
+                score_threshold=0.6
             )
             
             # Log results
@@ -89,15 +89,22 @@ def test_graph_rag_system():
     finally:
         # Clean up test data
         try:
-            with graph.driver.session() as session:
-                session.run("""
-                    MATCH (n)
-                    WHERE n.id IN $ids
-                    DETACH DELETE n
-                """, ids=[node['id'] for node in test_nodes])
-            logger.info("Test data cleaned up")
+            if 'graph' in locals():
+                with graph.driver.session() as session:
+                    session.run("""
+                        MATCH (n)
+                        WHERE n.id IN $ids
+                        DETACH DELETE n
+                    """, ids=[node['id'] for node in test_nodes])
+                logger.info("Test data cleaned up")
+                graph.close()
         except Exception as e:
             logger.error(f"Error cleaning up test data: {str(e)}")
+            if 'graph' in locals():
+                try:
+                    graph.close()
+                except:
+                    pass
 
 if __name__ == "__main__":
     test_graph_rag_system()

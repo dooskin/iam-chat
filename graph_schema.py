@@ -333,7 +333,7 @@ class GraphSchema:
             logger.error(f"Error creating node embedding: {str(e)}")
             raise
 
-    def get_graph_context(self, query: str, limit: int = 5, max_hops: int = 2, page_size: int = 100) -> Dict[str, Any]:
+    def get_graph_context(self, query: str, limit: int = 5, max_hops: int = 2, page_size: int = 100, score_threshold: float = 0.6) -> Dict[str, Any]:
         """
         Retrieve relevant graph context using simplified relationship traversal with pagination.
         
@@ -342,16 +342,19 @@ class GraphSchema:
             limit: Maximum number of primary nodes to return
             max_hops: Maximum number of relationship hops to traverse
             page_size: Number of results to process per page
+            score_threshold: Minimum similarity score for vector search results
             
         Returns:
             Dict containing primary nodes, related nodes, and query metadata
         """
         try:
-            # Get similar node IDs from vector store
+            # Initialize vector store for similarity search
+            from vector_store import VectorStore
             vector_store = VectorStore()
-            similar_nodes = vector_store.search_similar(
+            similar_nodes = vector_store.batch_search_similar(
                 query=query,
-                limit=limit
+                limit_per_type=limit,
+                score_threshold=score_threshold
             )
             
             # Collect all node IDs
@@ -373,6 +376,8 @@ class GraphSchema:
             
             # Find connected nodes and relationships in Neo4j
             with self.driver.session() as session:
+                # Convert max_hops to integer for Cypher query
+                hops = int(max_hops)
                 result = session.run("""
                 // Match starting nodes
                 MATCH (n)
@@ -381,9 +386,8 @@ class GraphSchema:
                 // Traverse relationships with pagination
                 CALL {
                     WITH n
-                    MATCH path = (n)-[*1..$max_hops]-(related)
-                    WHERE ALL(r IN relationships(path) 
-                          WHERE type(r) IN ['HAS_PERMISSION', 'BELONGS_TO', 'MANAGES', 'OWNS', 'ACCESSES'])
+                    MATCH path = (n)-[r*1..2]-(related)
+                    WHERE ALL(rel IN r WHERE type(rel) IN ['HAS_PERMISSION', 'BELONGS_TO', 'MANAGES', 'OWNS', 'ACCESSES'])
                     WITH n, path, related
                     SKIP $skip
                     LIMIT $page_size
@@ -409,31 +413,62 @@ class GraphSchema:
                 } as result
                 """,
                 node_ids=node_ids,
-                max_hops=max_hops,
                 skip=0,
                 page_size=page_size
                 )
                 
                 contexts = []
+                max_similarity = 0.0
+                
                 for record in result:
                     ctx = record["result"]
-                    # Add similarity from vector store results
+                    # Add similarity and metadata from vector store results
+                    ctx["primary_node"]["similarity"] = 0.0  # Default similarity
+                    
                     for collection_results in similar_nodes.values():
                         for result in collection_results:
                             if result["node_id"] == ctx["primary_node"]["id"]:
-                                ctx["primary_node"]["similarity"] = result["similarity"]
-                                ctx["primary_node"].update(result["metadata"])
+                                similarity = result["similarity"]
+                                ctx["primary_node"]["similarity"] = similarity
+                                max_similarity = max(max_similarity, similarity)
+                                # Update metadata while preserving existing properties
+                                if "metadata" in result:
+                                    ctx["primary_node"].update(result["metadata"])
+                    
+                    # Add timestamp and metadata
+                    ctx["primary_node"]["retrieved_at"] = datetime.now().isoformat()
                     contexts.append(ctx)
                 
-                # Process and structure the response
+                # Process paths and build graph structure
+                nodes = set()
+                relationships = []
+                
+                for ctx in contexts:
+                    for path in ctx["context"]["paths"]:
+                        for node in path.nodes:
+                            nodes.add(node)
+                        for rel in path.relationships:
+                            relationships.append({
+                                "type": rel.type,
+                                "properties": dict(rel.items()),
+                                "start_node": rel.start_node["id"],
+                                "end_node": rel.end_node["id"]
+                            })
+                
+                # Structure the final response
                 return {
                     'query': query,
                     'query_time': datetime.now().isoformat(),
                     'primary_nodes': [ctx['primary_node'] for ctx in contexts],
-                    'context_graph': self._process_context_paths(contexts),
+                    'context_graph': {
+                        'nodes': [dict(node.items()) for node in nodes],
+                        'relationships': relationships
+                    },
                     'metadata': {
                         'total_contexts': len(contexts),
-                        'vector_store_results': similar_nodes
+                        'max_similarity': max_similarity,
+                        'total_related_nodes': len(nodes),
+                        'total_relationships': len(relationships)
                     }
                 }
                 
