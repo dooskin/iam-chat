@@ -96,10 +96,10 @@ def verify_connection():
                     component = result.single()
                     logger.info(f"✓ Neo4j Server Version: {component['name']} {component['version']}")
                     
-                    # Test database name
-                    result = session.run("CALL db.name()")
-                    db_name = result.single()[0]
-                    logger.info(f"✓ Connected to database: {db_name}")
+                    # Test database info using system procedure
+                    result = session.run("CALL dbms.database.state() YIELD name, currentStatus")
+                    db_info = result.single()
+                    logger.info(f"✓ Connected to database: {db_info['name']} (Status: {db_info['currentStatus']})")
                     
                     break  # If we get here, all tests passed
                     

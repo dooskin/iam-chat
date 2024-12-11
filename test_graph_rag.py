@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def test_graph_rag_system():
-    """Test the Graph RAG system implementation."""
+    """Test the Graph RAG system with Cartography integration."""
     try:
         logger.info("=== Starting Graph RAG System Test ===")
         
@@ -16,23 +16,29 @@ def test_graph_rag_system():
         logger.info("Initializing Graph Schema...")
         graph = GraphSchema()
         
-        # Test schema initialization
-        logger.info("Testing schema initialization...")
-        graph.init_schema()
-        
+        # Initialize and validate schema
+        logger.info("Initializing and validating schema...")
+        if not graph.init_schema():
+            raise Exception("Failed to initialize schema")
         if not graph.validate_schema():
             raise Exception("Schema validation failed")
         logger.info("✓ Schema initialized successfully")
         
-        # Test data for vector embedding
+        # Test data for vector embedding with Cartography compatibility
         test_nodes = [
             {
                 'id': 'test_user_001',
                 'type': 'User',
                 'content': 'Senior software engineer in the cloud infrastructure team',
                 'metadata': {
+                    'firstseen': datetime.now().isoformat(),
+                    'lastupdated': int(datetime.now().timestamp()),
                     'department': 'Engineering',
-                    'location': 'San Francisco'
+                    'location': 'San Francisco',
+                    'email': 'engineer@example.com',
+                    'employee_type': 'FTE',
+                    'title': 'Senior Software Engineer',
+                    'manager_id': 'test_user_002'
                 }
             },
             {
@@ -40,8 +46,51 @@ def test_graph_rag_system():
                 'type': 'Resource',
                 'content': 'Production Kubernetes cluster in US-West region',
                 'metadata': {
+                    'firstseen': datetime.now().isoformat(),
+                    'lastupdated': int(datetime.now().timestamp()),
                     'environment': 'production',
-                    'platform': 'GCP'
+                    'platform': 'GCP',
+                    'resource_type': 'gcp_container_cluster',
+                    'project_id': 'prod-infrastructure',
+                    'region': 'us-west1',
+                    'service_account': 'kubernetes-sa@prod-infrastructure.iam.gserviceaccount.com'
+                }
+            },
+            {
+                'id': 'test_user_002',
+                'type': 'User',
+                'content': 'Engineering Manager for the Cloud Platform team',
+                'metadata': {
+                    'firstseen': datetime.now().isoformat(),
+                    'lastupdated': int(datetime.now().timestamp()),
+                    'department': 'Engineering',
+                    'location': 'San Francisco',
+                    'email': 'manager@example.com',
+                    'employee_type': 'FTE',
+                    'title': 'Engineering Manager'
+                }
+            }
+        ]
+        
+        # Define relationships between test nodes
+        relationships = [
+            {
+                'start_id': 'test_user_001',
+                'end_id': 'test_resource_001',
+                'type': 'MANAGES',
+                'properties': {
+                    'firstseen': datetime.now().isoformat(),
+                    'lastupdated': int(datetime.now().timestamp()),
+                    'permission_level': 'admin'
+                }
+            },
+            {
+                'start_id': 'test_user_001',
+                'end_id': 'test_user_002',
+                'type': 'REPORTS_TO',
+                'properties': {
+                    'firstseen': datetime.now().isoformat(),
+                    'lastupdated': int(datetime.now().timestamp())
                 }
             }
         ]
@@ -56,6 +105,23 @@ def test_graph_rag_system():
                 metadata=node['metadata']
             )
         logger.info("✓ Successfully created test nodes with embeddings")
+        
+        # Create relationships between test nodes
+        logger.info("Creating relationships between test nodes...")
+        with graph.driver.session() as session:
+            for rel in relationships:
+                session.run("""
+                    MATCH (a), (b)
+                    WHERE a.id = $start_id AND b.id = $end_id
+                    CREATE (a)-[r:$type $properties]->(b)
+                    RETURN type(r)
+                """, 
+                start_id=rel['start_id'],
+                end_id=rel['end_id'],
+                type=rel['type'],
+                properties=rel['properties']
+                )
+        logger.info("✓ Successfully created relationships between nodes")
         
         # Test context retrieval
         logger.info("Testing graph context retrieval...")
@@ -89,7 +155,7 @@ def test_graph_rag_system():
     finally:
         # Clean up test data
         try:
-            if 'graph' in locals():
+            if 'graph' in locals() and 'test_nodes' in locals():
                 with graph.driver.session() as session:
                     session.run("""
                         MATCH (n)
@@ -98,12 +164,15 @@ def test_graph_rag_system():
                     """, ids=[node['id'] for node in test_nodes])
                 logger.info("Test data cleaned up")
                 graph.close()
+            elif 'graph' in locals():
+                graph.close()
         except Exception as e:
             logger.error(f"Error cleaning up test data: {str(e)}")
             if 'graph' in locals():
                 try:
                     graph.close()
-                except:
+                except Exception as cleanup_error:
+                    logger.error(f"Error closing graph connection: {cleanup_error}")
                     pass
 
 if __name__ == "__main__":
