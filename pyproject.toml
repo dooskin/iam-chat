@@ -35,4 +35,5 @@ dependencies = [
     "pinecone",
     "gremlinpython>=3.7.3",
     "boto3>=1.35.78",
+    "botocore",
 ]

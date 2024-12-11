@@ -93,13 +93,7 @@ def test_neptune_connection():
                 connection = DriverRemoteConnection(
                     f'wss://{endpoint}:8182/gremlin',
                     'g',
-                    message_serializer=serializer.GraphSONSerializersV2d0(),
-                    pool_size=1,
-                    max_workers=2,
-                    max_connection_pool_size=1,
-                    connection_timeout_ms=30000,
-                    read_timeout_ms=30000,
-                    write_timeout_ms=30000
+                    message_serializer=serializer.GraphSONSerializersV2d0()
                 )
                 
                 # Test connection by creating traversal source
