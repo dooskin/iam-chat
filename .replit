@@ -17,27 +17,11 @@ args = "Flask Server"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Test Neo4j Integration"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Basic Neo4j Test"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Verify Neo4j"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "Test Graph RAG"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "Test Vector Store"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Test Cartography Compatibility"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
@@ -61,48 +45,6 @@ task = "packager.installForAll"
 task = "shell.exec"
 args = "python app.py"
 waitForPort = 5000
-
-[[workflows.workflow]]
-name = "Test Neo4j Integration"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python test_graph_schema.py"
-
-[[workflows.workflow]]
-name = "Basic Neo4j Test"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python test_neo4j_basic.py"
-
-[[workflows.workflow]]
-name = "Verify Neo4j"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python verify_neo4j.py"
 
 [[workflows.workflow]]
 name = "Test Graph RAG"
@@ -131,20 +73,6 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python test_vector_store.py"
-
-[[workflows.workflow]]
-name = "Test Cartography Compatibility"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python test_cartography_compatibility.py"
 
 [[workflows.workflow]]
 name = "Test Neptune Connection"

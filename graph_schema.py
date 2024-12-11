@@ -1,253 +1,141 @@
 import os
 import logging
-from typing import Dict, List, Optional, Any, TypeVar
+import json
+import boto3
+import asyncio
+import aiohttp
+import ssl
+import time
 from datetime import datetime
-from neo4j import GraphDatabase
+from typing import Dict, List, Optional, Any, TypeVar
+from botocore.config import Config
+from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
+from gremlin_python.process.anonymous_traversal import traversal
+from gremlin_python.process.graph_traversal import __
+from gremlin_python.driver.protocol import GremlinServerError
+from gremlin_python.driver import serializer
+from gremlin_python.driver.aiohttp.transport import AiohttpTransport
+from aiohttp.client_exceptions import ClientConnectorError, ClientError
 from openai import OpenAI
-from contextlib import contextmanager
-from dotenv import load_dotenv
+from gremlin_python.process.traversal import Order
+from gremlin_python.structure.graph import Graph
+from gremlin_python.structure.io.graphson import GraphSONReader
+from gremlin_python.structure.io.graphson import GraphSONWriter
+from java.lang import String
+from java.lang import Long
 
-# Configure logging first
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables from .env file
-logger.info("Loading environment variables from .env file...")
-load_dotenv(override=True)  # Force override existing env vars
-
-# Debug: Print loaded environment variables (without exposing sensitive values)
-logger.info("Environment variables loaded:")
-logger.info(f"NEO4J_URI configured: {bool(os.getenv('NEO4J_URI'))}")
-logger.info(f"NEO4J_USERNAME configured: {bool(os.getenv('NEO4J_USERNAME'))}")
-logger.info(f"NEO4J_PASSWORD configured: {bool(os.getenv('NEO4J_PASSWORD'))}")
-
 class GraphSchema:
-    """Graph database schema manager with vector embeddings support."""
+    """Graph database schema manager with vector embeddings support for Neptune."""
     
     def __init__(self):
-        """Initialize Neo4j connection and OpenAI client."""
+        """Initialize Neptune connection and OpenAI client."""
         try:
-            # Get configuration from environment with explicit defaults from .env
-            self.uri = os.getenv('NEO4J_URI')
-            self.user = os.getenv('NEO4J_USERNAME')  # Using the exact name from .env file
-            self.password = os.getenv('NEO4J_PASSWORD')
-            
-            # Validate configuration
-            if not all([self.uri, self.user, self.password]):
-                missing = []
-                if not self.uri: missing.append('NEO4J_URI')
-                if not self.user: missing.append('NEO4J_USER')
-                if not self.password: missing.append('NEO4J_PASSWORD')
-                raise ValueError(f"Missing required Neo4j configuration: {', '.join(missing)}")
+            # Get configuration from environment
+            self.endpoint = os.getenv('NEPTUNE_ENDPOINT')
+            if not self.endpoint:
+                raise ValueError("NEPTUNE_ENDPOINT environment variable is required")
             
             # Initialize OpenAI client
             self.openai = OpenAI()
             logger.info("OpenAI client initialized successfully")
             
-            # Debug environment variables
-            logger.info("Neo4j Connection Configuration:")
-            logger.info(f"URI: {self.uri}")
-            logger.info(f"Username (NEO4J_USERNAME) present: {bool(self.user)}")
-            logger.info(f"Password (NEO4J_PASSWORD) present: {bool(self.password)}")
-            
-            # Initialize Neo4j driver with Aura-specific configuration
-            logger.info("Initializing Neo4j driver with Aura configuration...")
-            self.driver = GraphDatabase.driver(
-                self.uri,
-                auth=(self.user, self.password),
-                max_connection_lifetime=3600,  # 1 hour max connection lifetime
-                max_connection_pool_size=50,   # Recommended pool size for Aura
-                connection_timeout=30,         # Reduced timeout for faster failure detection
-                connection_acquisition_timeout=60
-            )
-            
-            # Test connection
-            logger.info("Testing Neo4j connection...")
-            self.driver.verify_connectivity()
-            logger.info("Successfully connected to Neo4j")
+            # Initialize Neptune driver with retry logic
+            self._init_neptune_connection()
             
         except Exception as e:
-            logger.error(f"Failed to initialize Neo4j connection: {str(e)}")
-            logger.error("Please verify your Neo4j URI, username, and password")
+            logger.error(f"Failed to initialize Neptune connection: {str(e)}")
             raise
+
+    def _init_neptune_connection(self):
+        """Initialize Neptune connection with retry logic."""
+        retry_count = 0
+        max_retries = 3
+        last_error = None
+
+        while retry_count < max_retries:
+            try:
+                # Configure SSL context
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = True
+                ssl_context.verify_mode = ssl.CERT_REQUIRED
+
+                # Initialize connection
+                self.connection = DriverRemoteConnection(
+                    f'wss://{self.endpoint}:8182/gremlin',
+                    'g',
+                    message_serializer=serializer.GraphSONSerializersV2d0(),
+                    transport_factory=lambda: AiohttpTransport(
+                        call_from_event_loop=True,
+                        read_timeout=30,
+                        write_timeout=30,
+                        pool_size=1,
+                        ssl=ssl_context,
+                        max_content_length=65536
+                    )
+                )
+                
+                # Create traversal source
+                self.g = traversal().withRemote(self.connection)
+                
+                # Test connection
+                self.g.V().limit(1).count().next()
+                logger.info("Successfully connected to Neptune")
+                return
+                
+            except Exception as e:
+                retry_count += 1
+                last_error = str(e)
+                
+                if retry_count < max_retries:
+                    wait_time = min(2 ** retry_count, 30)
+                    logger.warning(f"Connection attempt {retry_count} failed: {last_error}")
+                    logger.info(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    raise Exception(f"Failed to establish Neptune connection after {max_retries} attempts: {last_error}")
 
     def init_schema(self):
         """Initialize the graph database schema with Cartography compatibility."""
         try:
-            with self.driver.session() as session:
-                # Create constraints for core nodes with improved error handling
-                constraints = [
-                    ("User", "user_id", "id"),
-                    ("Resource", "resource_id", "id"),
-                    ("Group", "group_id", "id"),
-                    ("Role", "role_id", "id"),
-                    ("Application", "application_id", "id"),
-                    ("Device", "device_id", "id"),
-                    ("Network", "network_id", "id")
-                ]
+            # Create property keys and indices for core vertex labels
+            vertex_labels = ['User', 'Resource', 'Group', 'Role', 'Application']
+            
+            for label in vertex_labels:
+                # Create indices for common properties
+                self.g.management().makeLabelConstraint(label).add().next()
+                self.g.management().makePropertyKey('id').dataType(String.class).make()
+                self.g.management().makePropertyKey('name').dataType(String.class).make()
+                self.g.management().makePropertyKey('lastupdated').dataType(Long.class).make()
+                self.g.management().makePropertyKey('firstseen').dataType(Long.class).make()
                 
-                # Create constraints with enhanced error handling and validation
-                for node_type, constraint_name, property_name in constraints:
-                    try:
-                        # Check if constraint already exists
-                        existing_constraints = session.run("SHOW CONSTRAINTS").data()
-                        constraint_exists = any(
-                            c.get('name') == constraint_name for c in existing_constraints
-                        )
-                        
-                        if not constraint_exists:
-                            session.run(f"""
-                                CREATE CONSTRAINT {constraint_name} IF NOT EXISTS
-                                FOR (n:{node_type}) REQUIRE n.{property_name} IS UNIQUE
-                            """)
-                            logger.info(f"Created new constraint: {constraint_name}")
-                        else:
-                            logger.info(f"Constraint already exists: {constraint_name}")
-                    except Exception as e:
-                        if "An equivalent constraint already exists" in str(e):
-                            logger.info(f"Constraint already exists: {constraint_name}")
-                        else:
-                            logger.warning(f"Error creating constraint {constraint_name}: {str(e)}")
-                            logger.warning("Continuing with schema initialization...")
+                # Create composite indices
+                self.g.management().buildIndex(f'{label.lower()}_id_idx')\
+                    .addKey('id')\
+                    .indexOnly(label)\
+                    .unique()\
+                    .buildCompositeIndex()
                 
-                # Create vector search indices with improved Aura compatibility
-                core_types = ['User', 'Resource', 'Group', 'Role', 'Application']
-                
-                # Vector embedding indices with validation
-                for node_type in core_types:
-                    index_name = f"{node_type.lower()}_vector_idx"
-                    try:
-                        # Check if index already exists
-                        existing_indexes = session.run("SHOW INDEXES").data()
-                        index_exists = any(
-                            idx.get('name') == index_name for idx in existing_indexes
-                        )
-                        
-                        if not index_exists:
-                            # Create vector index with explicit type for Aura compatibility
-                            session.run(f"""
-                                CREATE VECTOR INDEX {index_name} IF NOT EXISTS
-                                FOR (n:{node_type})
-                                ON (n.embedding)
-                                OPTIONS {{indexConfig: {{
-                                    `vector.dimensions`: 1536,
-                                    `vector.similarity_function`: 'cosine'
-                                }}}}
-                            """)
-                            logger.info(f"Created new vector index for {node_type}")
-                        else:
-                            logger.info(f"Vector index already exists for {node_type}")
-                    except Exception as e:
-                        if "An equivalent index already exists" in str(e):
-                            logger.info(f"Vector index already exists for {node_type}")
-                        else:
-                            logger.warning(f"Error creating vector index for {node_type}: {str(e)}")
-                            logger.warning("Continuing with schema initialization...")
-                
-                # Cartography sync timestamp indices
-                for node_type in core_types:
-                    try:
-                        session.run(f"""
-                            CREATE INDEX {node_type.lower()}_sync_idx IF NOT EXISTS
-                            FOR (n:{node_type})
-                            ON (n.lastupdated)
-                        """)
-                        logger.info(f"Created/verified sync index for {node_type}")
-                    except Exception as e:
-                        logger.warning(f"Error creating sync index for {node_type}: {str(e)}")
-                
-                # Create relationship indices for each type separately
-                try:
-                    for rel_type in ["HAS_PERMISSION", "BELONGS_TO", "MANAGES", "OWNS", "ACCESSES"]:
-                        # Create standard relationship property indices
-                        session.run(f"""
-                            CREATE INDEX {rel_type.lower()}_timestamp_idx IF NOT EXISTS
-                            FOR ()-[r:{rel_type}]-()
-                            ON (r.timestamp)
-                        """)
-                        session.run(f"""
-                            CREATE INDEX {rel_type.lower()}_type_idx IF NOT EXISTS
-                            FOR ()-[r:{rel_type}]-()
-                            ON (r.type)
-                        """)
-                        logger.info(f"Created/verified relationship indices for {rel_type}")
-                except Exception as e:
-                    logger.warning(f"Error creating relationship indices: {str(e)}")
-                
-                # Verify schema initialization
-                result = session.run("SHOW CONSTRAINTS")
-                constraints = [record["name"] for record in result]
-                logger.info(f"Active constraints: {', '.join(constraints)}")
-                
-                logger.info("Successfully initialized Neo4j schema with Cartography compatibility")
-                return True
-                
+                logger.info(f"Created schema elements for {label}")
+            
+            # Create indices for relationships
+            rel_types = ["HAS_PERMISSION", "BELONGS_TO", "MANAGES", "OWNS", "ACCESSES"]
+            for rel_type in rel_types:
+                self.g.management().makeEdgeLabel(rel_type).make()
+                logger.info(f"Created edge label: {rel_type}")
+            
+            logger.info("Successfully initialized Neptune schema")
+            return True
+            
         except Exception as e:
             logger.error(f"Failed to initialize schema: {str(e)}")
             raise
 
-    def validate_schema(self) -> bool:
-        """
-        Validate the graph database schema including Cartography compatibility.
-        
-        Returns:
-            bool: True if schema is valid, False otherwise
-        """
-        try:
-            with self.driver.session() as session:
-                # Check constraints
-                result = session.run("SHOW CONSTRAINTS")
-                constraints = [record["name"] for record in result]
-                
-                required_constraints = [
-                    "user_id", "resource_id", "group_id", 
-                    "role_id", "application_id"
-                ]
-                missing_constraints = [c for c in required_constraints if c not in constraints]
-                
-                if missing_constraints:
-                    logger.warning(f"Missing constraints: {missing_constraints}")
-                    return False
-                
-                # Validate Cartography-specific indices
-                # Validate Cartography-specific indices
-                try:
-                    cartography_indices = [
-                        ('User', ['lastupdated', 'firstseen', 'email']),
-                        ('Resource', ['lastupdated', 'firstseen', 'resource_type']),
-                        ('Group', ['lastupdated', 'firstseen', 'group_type']),
-                        ('Role', ['lastupdated', 'firstseen', 'role_type']),
-                        ('Application', ['lastupdated', 'firstseen', 'app_type'])
-                    ]
-                    
-                    for node_type, properties in cartography_indices:
-                        for prop in properties:
-                            session.run(f"""
-                                CREATE INDEX {node_type.lower()}_{prop} IF NOT EXISTS
-                                FOR (n:{node_type}) ON (n.{prop})
-                            """)
-                    logger.info("Cartography indices validated and created")
-                except Exception as e:
-                    logger.warning(f"Could not create all Cartography indices: {str(e)}")
-                    logger.warning("Some Cartography features may be limited")
-                
-                logger.info("Schema validation successful")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Schema validation failed: {str(e)}")
-            return False
-
     def create_node_embedding(self, node_id: str, node_type: str, text_content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Create vector embedding for a node using OpenAI with enhanced metadata support.
-        
-        Args:
-            node_id: Unique identifier for the node
-            node_type: Type/label of the node
-            text_content: Text to generate embedding from
-            metadata: Optional metadata to store with the node
-        """
+        """Create vector embedding for a node using OpenAI."""
         try:
             # Generate embedding using OpenAI
             response = self.openai.embeddings.create(
@@ -256,7 +144,7 @@ class GraphSchema:
             )
             embedding = response.data[0].embedding
             
-            # Prepare metadata with defaults
+            # Prepare metadata
             node_metadata = {
                 'last_updated': datetime.now().isoformat(),
                 'content_length': len(text_content),
@@ -265,212 +153,103 @@ class GraphSchema:
             if metadata:
                 node_metadata.update(metadata)
             
-            # Store embedding with Cartography-compatible metadata in Neo4j
-            with self.driver.session() as session:
-                query = """
-                MERGE (n:Entity {id: $node_id})
-                SET n:$node_type,
-                    n.embedding = $embedding,
-                    n.text_content = $text_content,
-                    n.embedding_model = $embedding_model,
-                    n.last_updated = $last_updated,
-                    n.content_length = $content_length,
-                    n.last_embedded = timestamp(),
-                    n.lastupdated = timestamp(),  // Cartography sync timestamp
-                    n.firstseen = CASE 
-                        WHEN n.firstseen IS NULL 
-                        THEN timestamp() 
-                        ELSE n.firstseen 
-                    END
-                """
-                if metadata:
-                    for key, value in metadata.items():
-                        query += f",\n    n.{key} = ${key}"
-                
-                params = {
-                    'node_id': node_id,
-                    'node_type': node_type,
-                    'embedding': embedding,
-                    'text_content': text_content,
-                    'embedding_model': node_metadata['embedding_model'],
-                    'last_updated': node_metadata['last_updated'],
-                    'content_length': node_metadata['content_length']
-                }
-                if metadata:
-                    params.update(metadata)
-                    
-                session.run(query, params)
-                
+            # Store node with embedding in Neptune
+            properties = {
+                'id': node_id,
+                'text_content': text_content,
+                'embedding': embedding,
+                'last_updated': node_metadata['last_updated'],
+                'content_length': node_metadata['content_length'],
+                'embedding_model': node_metadata['embedding_model'],
+                'lastupdated': int(datetime.now().timestamp() * 1000),
+                'firstseen': int(datetime.now().timestamp() * 1000)
+            }
+            if metadata:
+                properties.update(metadata)
+            
+            # Create or update vertex
+            self.g.addV(node_type)\
+                .property('id', node_id)\
+                .property('text_content', text_content)\
+                .property('embedding', embedding)\
+                .property('last_updated', properties['last_updated'])\
+                .property('content_length', properties['content_length'])\
+                .property('embedding_model', properties['embedding_model'])\
+                .property('lastupdated', properties['lastupdated'])\
+                .property('firstseen', properties['firstseen'])\
+                .next()
+            
             logger.info(f"Successfully created embedding for node {node_id} of type {node_type}")
                 
         except Exception as e:
             logger.error(f"Error creating node embedding: {str(e)}")
             raise
 
-    def get_graph_context(self, query: str, limit: int = 5, max_hops: int = 2, page_size: int = 100, score_threshold: float = 0.6) -> Dict[str, Any]:
-        """
-        Retrieve relevant graph context using similarity search and relationship traversal.
-        
-        Args:
-            query: Search query text
-            limit: Maximum number of primary nodes to return
-            max_hops: Maximum number of relationship hops to traverse
-            page_size: Number of results to process per page
-            score_threshold: Minimum similarity score for vector search results
-        """
+    def get_graph_context(self, query: str, limit: int = 5, max_hops: int = 2, score_threshold: float = 0.6) -> Dict[str, Any]:
+        """Retrieve relevant graph context using similarity search and relationship traversal."""
         try:
-            # Initialize response metadata
-            metadata = {
+            # Generate query embedding
+            query_embedding = self.openai.embeddings.create(
+                model="text-embedding-3-small",
+                input=query
+            ).data[0].embedding
+            
+            # Find similar nodes using vector similarity
+            similar_nodes = self.g.V()\
+                .has('embedding')\
+                .order()\
+                .by(__.coalesce(
+                    __.values('embedding').math('cosineSimilarity(' + str(query_embedding) + ')'),
+                    __.constant(-1)
+                ), Order.desc)\
+                .limit(limit)\
+                .project('id', 'label', 'properties', 'similarity')\
+                .by(__.id())\
+                .by(__.label())\
+                .by(__.valueMap())\
+                .by(__.values('embedding').math('cosineSimilarity(' + str(query_embedding) + ')'))\
+                .toList()
+            
+            # Filter by similarity threshold
+            similar_nodes = [n for n in similar_nodes if n['similarity'] >= score_threshold]
+            
+            # Get connected nodes within max_hops
+            context = []
+            for node in similar_nodes:
+                connected = self.g.V(node['id'])\
+                    .repeat(__.bothE().otherV())\
+                    .times(max_hops)\
+                    .dedup()\
+                    .project('id', 'label', 'properties')\
+                    .by(__.id())\
+                    .by(__.label())\
+                    .by(__.valueMap())\
+                    .toList()
+                
+                context.append({
+                    'primary_node': node,
+                    'connected_nodes': connected
+                })
+            
+            return {
+                'query': query,
                 'query_time': datetime.now().isoformat(),
-                'max_similarity': 0.0,
-                'total_contexts': 0,
-                'total_related_nodes': 0,
-                'total_relationships': 0
+                'contexts': context,
+                'metadata': {
+                    'total_nodes': len(similar_nodes),
+                    'total_connected': sum(len(c['connected_nodes']) for c in context),
+                    'max_similarity': max([n['similarity'] for n in similar_nodes]) if similar_nodes else 0
+                }
             }
             
-            # Initialize vector store for similarity search
-            from vector_store import VectorStore
-            vector_store = VectorStore()
-            similar_nodes = vector_store.batch_search_similar(
-                query=query,
-                limit_per_type=limit,
-                score_threshold=score_threshold
-            )
-            
-            # Collect all node IDs and track max similarity
-            node_ids = []
-            for collection_results in similar_nodes.values():
-                for result in collection_results:
-                    node_ids.append(result["node_id"])
-                    if "similarity" in result:
-                        metadata['max_similarity'] = max(metadata['max_similarity'], result["similarity"])
-            
-            if not node_ids:
-                logger.warning("No similar nodes found in vector store")
-                return {
-                    'query': query,
-                    'query_time': metadata['query_time'],
-                    'primary_nodes': [],
-                    'context_graph': {'nodes': [], 'relationships': []},
-                    'metadata': metadata
-                }
-            
-            # Find connected nodes and relationships in Neo4j
-            with self.driver.session() as session:
-                # Convert max_hops to integer for Cypher query
-                hops = int(max_hops)
-                result = session.run("""
-                // Match starting nodes
-                MATCH (n)
-                WHERE n.id IN $node_ids
-                
-                // Use updated subquery syntax
-                CALL {
-                    WITH n
-                    MATCH p=(n)-[r*1..2]-(related)
-                    WHERE ALL(rel IN r WHERE type(rel) IN ['HAS_PERMISSION', 'BELONGS_TO', 'MANAGES', 'OWNS', 'ACCESSES'])
-                    RETURN p as path, related
-                    SKIP $skip
-                    LIMIT $page_size
-                }
-                
-                // Collect and structure data
-                WITH n,
-                     collect({
-                         path: path,
-                         related: related,
-                         nodes: nodes(path),
-                         relationships: relationships(path)
-                     }) as context_paths
-                
-                // Return structured result
-                RETURN {
-                    primary_node: {
-                        id: n.id,
-                        labels: labels(n),
-                        properties: properties(n)
-                    },
-                    context: context_paths
-                } as result
-                """,
-                node_ids=node_ids,
-                skip=0,
-                page_size=page_size
-                )
-                
-                # Process query results
-                contexts = []
-                nodes = set()
-                relationships = []
-                
-                for record in result:
-                    ctx = record["result"]
-                    primary_node = ctx["primary_node"]
-                    
-                    # Initialize similarity score
-                    primary_node["similarity"] = 0.0
-                    
-                    # Update similarity and metadata from vector store results
-                    for collection_results in similar_nodes.values():
-                        for result in collection_results:
-                            if result["node_id"] == primary_node["id"]:
-                                primary_node["similarity"] = result.get("similarity", 0.0)
-                                if "metadata" in result:
-                                    primary_node.update(result["metadata"])
-                    
-                    # Add timestamp
-                    primary_node["retrieved_at"] = datetime.now().isoformat()
-                    contexts.append(primary_node)
-                    
-                    # Process context paths
-                    for path_data in ctx["context"]:
-                        # Add all nodes from the path
-                        for node in path_data["nodes"]:
-                            # Convert Neo4j Node to dictionary
-                            node_dict = {
-                                'id': node['id'] if 'id' in node else None,
-                                'labels': list(node.labels) if hasattr(node, 'labels') else [],
-                                'properties': dict(node)
-                            }
-                            nodes.add(frozenset(node_dict.items()))
-                        
-                        # Process relationships
-                        for rel in path_data["relationships"]:
-                            rel_data = {
-                                "type": rel.type if hasattr(rel, 'type') else str(type(rel)),
-                                "properties": dict(rel),
-                                "start_node": rel.start_node['id'] if hasattr(rel, 'start_node') else None,
-                                "end_node": rel.end_node['id'] if hasattr(rel, 'end_node') else None
-                            }
-                            relationships.append(rel_data)
-                
-                # Update metadata
-                metadata.update({
-                    'total_contexts': len(contexts),
-                    'total_related_nodes': len(nodes),
-                    'total_relationships': len(relationships)
-                })
-                
-                # Structure final response
-                return {
-                    'query': query,
-                    'query_time': metadata['query_time'],
-                    'primary_nodes': contexts,
-                    'context_graph': {
-                        'nodes': [dict(node) for node in nodes],
-                        'relationships': relationships
-                    },
-                    'metadata': metadata
-                }
-                
         except Exception as e:
             logger.error(f"Error retrieving graph context: {str(e)}")
             raise
 
     def close(self):
-        """Close the Neo4j driver connection."""
+        """Close the Neptune connection."""
         try:
-            if hasattr(self, 'driver'):
-                self.driver.close()
+            if hasattr(self, 'connection'):
+                self.connection.close()
         except Exception as e:
-            logger.error(f"Error closing Neo4j connection: {str(e)}")
+            logger.error(f"Error closing Neptune connection: {str(e)}")

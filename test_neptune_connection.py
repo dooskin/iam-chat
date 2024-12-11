@@ -1,7 +1,11 @@
 import os
+import ssl
 import logging
 import json
 import boto3
+import asyncio
+import aiohttp
+from datetime import datetime
 from botocore.config import Config
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
 from gremlin_python.process.anonymous_traversal import traversal
@@ -9,9 +13,7 @@ from gremlin_python.process.graph_traversal import __
 from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.driver import serializer
 from gremlin_python.driver.aiohttp.transport import AiohttpTransport
-# Using aiohttp transport exclusively
-from datetime import datetime
-import asyncio
+from aiohttp.client_exceptions import ClientConnectorError, ClientError
 
 # Configure logging
 logging.basicConfig(
@@ -101,16 +103,24 @@ def test_neptune_connection():
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
 
+                # Configure SSL context
+                import ssl
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = True
+                ssl_context.verify_mode = ssl.CERT_REQUIRED
+
+                # Initialize connection with retry logic
                 connection = DriverRemoteConnection(
                     f'wss://{endpoint}:8182/gremlin',
                     'g',
                     message_serializer=serializer.GraphSONSerializersV2d0(),
                     transport_factory=lambda: AiohttpTransport(
                         call_from_event_loop=True,
-                        read_timeout=60,
-                        write_timeout=60,
-                        max_retries=3,
-                        pool_size=1
+                        read_timeout=30,
+                        write_timeout=30,
+                        pool_size=1,
+                        ssl=ssl_context,
+                        max_content_length=65536
                     )
                 )
                 logger.info("Successfully created DriverRemoteConnection")
@@ -128,18 +138,29 @@ def test_neptune_connection():
                 logger.info("✓ Successfully established connection to Neptune")
                 break
                 
-            except GremlinServerError as gse:
+            except (GremlinServerError, ClientConnectorError, ClientError, ssl.SSLError) as e:
                 retry_count += 1
-                logger.error(f"Gremlin Server Error: {str(gse)}")
-                if retry_count < max_retries:
-                    logger.info(f"Retrying in {2 ** retry_count} seconds...")
-                    import time
-                    time.sleep(2 ** retry_count)
+                if isinstance(e, ssl.SSLError):
+                    logger.error(f"SSL Error: {str(e)}")
+                elif isinstance(e, ClientConnectorError):
+                    logger.error(f"Connection Error: {str(e)}")
                 else:
-                    raise Exception("Failed to connect to Neptune after maximum retries")
+                    logger.error(f"Gremlin Server Error: {str(e)}")
+                
+                if retry_count < max_retries:
+                    wait_time = min(2 ** retry_count, 30)  # Cap wait time at 30 seconds
+                    logger.info(f"Retrying in {wait_time} seconds... (Attempt {retry_count + 1} of {max_retries})")
+                    import time
+                    time.sleep(wait_time)
+                else:
+                    raise Exception(f"Failed to connect to Neptune after {max_retries} attempts: {str(e)}")
                     
             except Exception as e:
                 logger.error(f"Unexpected error during connection: {str(e)}")
+                logger.error("Connection details:")
+                logger.error(f"Endpoint: {endpoint}")
+                logger.error(f"Port: 8182")
+                logger.error(f"Protocol: WSS")
                 raise
         
         try:

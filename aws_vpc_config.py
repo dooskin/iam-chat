@@ -196,9 +196,9 @@ def configure_vpc_access():
     try:
         # Initialize boto3 clients with retry configuration
         logger.info("Initializing AWS clients...")
-        # Get region from environment or use us-east-1 as default
-        region = os.getenv('AWS_REGION', 'us-east-1')
-        logger.info(f"Configuring AWS resources in region: {region}")
+        # Set region to us-east-2 (Ohio)
+        region = 'us-east-2'
+        logger.info(f"Configuring AWS resources in region: {region} (Ohio)")
         config = Config(
             region_name=region,
             retries={
@@ -267,9 +267,11 @@ def configure_vpc_access():
                 # Create VPC endpoint for Neptune service
                 logger.info("Creating VPC endpoint for Neptune service...")
                 try:
+                    endpoint_service_name = f'com.amazonaws.{region}.neptune-db'
+                    logger.info(f"Using Neptune service endpoint: {endpoint_service_name}")
                     vpc_endpoint = ec2.create_vpc_endpoint(
                         VpcId=vpc_id,
-                        ServiceName=f'com.amazonaws.{region}.neptune',
+                        ServiceName=endpoint_service_name,
                         VpcEndpointType='Interface',
                         SecurityGroupIds=[sg_id],
                         SubnetIds=subnet_ids,
