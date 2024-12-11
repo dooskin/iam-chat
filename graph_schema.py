@@ -151,12 +151,18 @@ class GraphSchema:
                 # Create relationship indices for each type separately
                 try:
                     for rel_type in ["HAS_PERMISSION", "BELONGS_TO", "MANAGES", "OWNS", "ACCESSES"]:
+                        # Create standard relationship property indices
                         session.run(f"""
-                            CREATE INDEX {rel_type.lower()}_idx IF NOT EXISTS
+                            CREATE INDEX {rel_type.lower()}_timestamp_idx IF NOT EXISTS
                             FOR ()-[r:{rel_type}]-()
-                            ON type(r)
+                            ON (r.timestamp)
                         """)
-                        logger.info(f"Created/verified relationship index for {rel_type}")
+                        session.run(f"""
+                            CREATE INDEX {rel_type.lower()}_type_idx IF NOT EXISTS
+                            FOR ()-[r:{rel_type}]-()
+                            ON (r.type)
+                        """)
+                        logger.info(f"Created/verified relationship indices for {rel_type}")
                 except Exception as e:
                     logger.warning(f"Error creating relationship indices: {str(e)}")
                 
@@ -290,25 +296,36 @@ class GraphSchema:
             if metadata:
                 node_metadata.update(metadata)
             
-            # Store embedding with metadata in Neo4j
+            # Store embedding with flattened metadata in Neo4j
             with self.driver.session() as session:
                 query = """
                 MATCH (n)
                 WHERE n.id = $node_id AND $node_type in labels(n)
                 SET n.embedding = $embedding,
                     n.text_content = $text_content,
-                    n.metadata = $metadata,
+                    n.embedding_model = $embedding_model,
+                    n.last_updated = $last_updated,
+                    n.content_length = $content_length,
                     n.last_embedded = timestamp(),
                     n.lastupdated = timestamp()  // Cartography compatibility
                 """
-                session.run(
-                    query,
-                    node_id=node_id,
-                    node_type=node_type,
-                    embedding=embedding,
-                    text_content=text_content,
-                    metadata=node_metadata
-                )
+                if metadata:
+                    for key, value in metadata.items():
+                        query += f",\n                    n.{key} = ${key}"
+                
+                params = {
+                    'node_id': node_id,
+                    'node_type': node_type,
+                    'embedding': embedding,
+                    'text_content': text_content,
+                    'embedding_model': node_metadata['embedding_model'],
+                    'last_updated': node_metadata['last_updated'],
+                    'content_length': node_metadata['content_length']
+                }
+                if metadata:
+                    params.update(metadata)
+                    
+                session.run(query, params)
                 
             logger.info(f"Successfully created embedding for node {node_id} of type {node_type}")
                 
@@ -316,119 +333,107 @@ class GraphSchema:
             logger.error(f"Error creating node embedding: {str(e)}")
             raise
 
-    def get_graph_context(self, query: str, limit: int = 5, min_similarity: float = 0.7, max_hops: int = 2) -> Dict[str, Any]:
+    def get_graph_context(self, query: str, limit: int = 5, max_hops: int = 2, page_size: int = 100) -> Dict[str, Any]:
         """
-        Retrieve relevant graph context using vector similarity and advanced relationship traversal.
+        Retrieve relevant graph context using simplified relationship traversal with pagination.
         
         Args:
             query: Search query text
             limit: Maximum number of primary nodes to return
-            min_similarity: Minimum cosine similarity threshold
             max_hops: Maximum number of relationship hops to traverse
+            page_size: Number of results to process per page
             
         Returns:
             Dict containing primary nodes, related nodes, and query metadata
         """
         try:
-            # Generate query embedding
-            response = self.openai.embeddings.create(
-                model="text-embedding-3-small",
-                input=query
+            # Get similar node IDs from vector store
+            vector_store = VectorStore()
+            similar_nodes = vector_store.search_similar(
+                query=query,
+                limit=limit
             )
-            query_embedding = response.data[0].embedding
             
-            # Find similar nodes and their relationships in Neo4j
+            # Collect all node IDs
+            node_ids = [
+                result["node_id"]
+                for collection_results in similar_nodes.values()
+                for result in collection_results
+            ]
+            
+            if not node_ids:
+                logger.warning("No similar nodes found in vector store")
+                return {
+                    'query': query,
+                    'query_time': datetime.now().isoformat(),
+                    'primary_nodes': [],
+                    'context_graph': {'nodes': [], 'relationships': []},
+                    'metadata': {'total_contexts': 0}
+                }
+            
+            # Find connected nodes and relationships in Neo4j
             with self.driver.session() as session:
                 result = session.run("""
-                // Find initial similar nodes using vector similarity
+                // Match starting nodes
                 MATCH (n)
-                WHERE n.embedding IS NOT NULL
-                WITH n, gds.similarity.cosine(n.embedding, $query_embedding) AS similarity
-                WHERE similarity > $min_similarity
+                WHERE n.id IN $node_ids
                 
-                // Traverse relationships up to max_hops
-                CALL apoc.path.subgraphAll(n, {
-                    relationshipFilter: 'HAS_PERMISSION|BELONGS_TO|MANAGES|OWNS|ACCESSES',
-                    maxLevel: $max_hops
-                })
-                YIELD nodes, relationships
+                // Traverse relationships with pagination
+                CALL {
+                    WITH n
+                    MATCH path = (n)-[*1..$max_hops]-(related)
+                    WHERE ALL(r IN relationships(path) 
+                          WHERE type(r) IN ['HAS_PERMISSION', 'BELONGS_TO', 'MANAGES', 'OWNS', 'ACCESSES'])
+                    WITH n, path, related
+                    SKIP $skip
+                    LIMIT $page_size
+                    RETURN path, related
+                }
                 
-                // Process nodes
-                UNWIND nodes as related_node
-                WITH n, similarity, related_node, relationships
+                // Collect context data
+                WITH DISTINCT n,
+                     collect(DISTINCT path) as paths,
+                     collect(DISTINCT related) as related_nodes
                 
-                // Collect node metadata
-                WITH n, similarity, related_node, relationships,
-                CASE WHEN related_node = n THEN 0 ELSE 
-                    REDUCE(distance = -1, rel IN relationships |
-                        CASE WHEN rel.source = n.id OR rel.target = n.id
-                        THEN 1 ELSE distance + 1 END)
-                END as hop_distance
-                
-                // Group and return enriched data
-                WITH n, similarity,
-                collect(DISTINCT {
-                    node: related_node,
-                    hop_distance: hop_distance,
-                    labels: labels(related_node),
-                    properties: properties(related_node)
-                }) as context_nodes,
-                collect(DISTINCT {
-                    source: startNode(rel).id,
-                    target: endNode(rel).id,
-                    type: type(rel),
-                    properties: properties(rel)
-                }) as context_relationships
-                
-                // Return complete context
+                // Structure response
                 RETURN {
                     primary_node: {
                         id: n.id,
                         labels: labels(n),
-                        name: n.name,
-                        type: n.type,
-                        content: n.text_content,
-                        metadata: n.metadata,
-                        platform: n.platform,
-                        environment: n.environment,
-                        location: n.location,
-                        owner: n.owner,
-                        similarity: similarity,
-                        last_updated: n.lastupdated  // Cartography compatibility
+                        properties: properties(n)
                     },
                     context: {
-                        nodes: context_nodes,
-                        relationships: context_relationships
+                        paths: paths,
+                        related_nodes: related_nodes
                     }
-                } as graph_context
-                ORDER BY similarity DESC
-                LIMIT $limit
-                """, 
-                query_embedding=query_embedding,
-                limit=limit,
-                min_similarity=min_similarity,
-                max_hops=max_hops
+                } as result
+                """,
+                node_ids=node_ids,
+                max_hops=max_hops,
+                skip=0,
+                page_size=page_size
                 )
                 
-                contexts = [record["graph_context"] for record in result]
+                contexts = []
+                for record in result:
+                    ctx = record["result"]
+                    # Add similarity from vector store results
+                    for collection_results in similar_nodes.values():
+                        for result in collection_results:
+                            if result["node_id"] == ctx["primary_node"]["id"]:
+                                ctx["primary_node"]["similarity"] = result["similarity"]
+                                ctx["primary_node"].update(result["metadata"])
+                    contexts.append(ctx)
                 
                 # Process and structure the response
                 return {
                     'query': query,
                     'query_time': datetime.now().isoformat(),
                     'primary_nodes': [ctx['primary_node'] for ctx in contexts],
-                    'context_graph': {
-                        'nodes': list({node['node']['id']: node 
-                                    for ctx in contexts 
-                                    for node in ctx['context']['nodes']}.values()),
-                        'relationships': list({(rel['source'], rel['target'], rel['type']): rel 
-                                            for ctx in contexts 
-                                            for rel in ctx['context']['relationships']}.values())
-                    },
+                    'context_graph': self._process_context_paths(contexts),
                     'metadata': {
                         'total_contexts': len(contexts),
-                        'max_similarity': max([ctx['primary_node']['similarity'] for ctx in contexts]) if contexts else 0,
-                        'min_similarity': min([ctx['primary_node']['similarity'] for ctx in contexts]) if contexts else 0
+                        'vector_store_results': similar_nodes
                     }
                 }
                 

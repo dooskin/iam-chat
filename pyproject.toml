@@ -30,4 +30,5 @@ dependencies = [
     "numpy>=2.0.2",
     "scikit-learn>=1.6.0",
     "python-dotenv>=1.0.1",
+    "qdrant-client>=1.12.1",
 ]
