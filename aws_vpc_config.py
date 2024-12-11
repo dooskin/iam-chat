@@ -37,50 +37,98 @@ def configure_security_group(ec2_client, sg_id, vpc_id):
         sg_info = ec2_client.describe_security_groups(GroupIds=[sg_id])
         existing_rules = sg_info['SecurityGroups'][0]['IpPermissions']
         
-        neptune_rule = {
-            'IpProtocol': 'tcp',
-            'FromPort': 8182,
-            'ToPort': 8182,
-            'IpRanges': [{
-                'CidrIp': '0.0.0.0/0',
-                'Description': 'Allow Replit access to Neptune'
-            }]
-        }
-        
-        rule_exists = any(
-            rule.get('FromPort') == 8182 and
-            rule.get('ToPort') == 8182 and
-            any(ip_range.get('CidrIp') == '0.0.0.0/0' 
-                for ip_range in rule.get('IpRanges', []))
-            for rule in existing_rules
-        )
-        
-        if not rule_exists:
-            logger.info("Adding new security group rule...")
-            ec2_client.authorize_security_group_ingress(
-                GroupId=sg_id,
-                IpPermissions=[neptune_rule]
-            )
-            logger.info("✓ Security group ingress rule added")
-            
-            # Add egress rule if needed
-            ec2_client.authorize_security_group_egress(
-                GroupId=sg_id,
-                IpPermissions=[{
-                    'IpProtocol': '-1',  # All traffic
-                    'FromPort': -1,
-                    'ToPort': -1,
-                    'IpRanges': [{
-                        'CidrIp': '0.0.0.0/0',
-                        'Description': 'Allow all outbound traffic'
-                    }]
+        neptune_rules = [
+            {
+                'IpProtocol': 'tcp',
+                'FromPort': 8182,
+                'ToPort': 8182,
+                'IpRanges': [{
+                    'CidrIp': '0.0.0.0/0',
+                    'Description': 'Allow Replit access to Neptune'
                 }]
-            )
-            logger.info("✓ Security group egress rule added")
-        else:
-            logger.info("✓ Required security group rules already exist")
+            },
+            {
+                'IpProtocol': 'tcp',
+                'FromPort': 8182,
+                'ToPort': 8182,
+                'UserIdGroupPairs': [{
+                    'GroupId': sg_id,
+                    'Description': 'Allow self-referential access for Neptune'
+                }]
+            }
+        ]
+        
+        # Check if Neptune rules exist
+        for neptune_rule in neptune_rules:
+            rule_exists = False
             
+            if 'IpRanges' in neptune_rule:
+                rule_exists = any(
+                    rule.get('FromPort') == 8182 and
+                    rule.get('ToPort') == 8182 and
+                    any(ip_range.get('CidrIp') == '0.0.0.0/0' 
+                        for ip_range in rule.get('IpRanges', []))
+                    for rule in existing_rules
+                )
+            elif 'UserIdGroupPairs' in neptune_rule:
+                rule_exists = any(
+                    rule.get('FromPort') == 8182 and
+                    rule.get('ToPort') == 8182 and
+                    any(pair.get('GroupId') == sg_id
+                        for pair in rule.get('UserIdGroupPairs', []))
+                    for rule in existing_rules
+                )
+            
+            if not rule_exists:
+                logger.info(f"Adding new security group rule for port 8182...")
+                try:
+                    ec2_client.authorize_security_group_ingress(
+                        GroupId=sg_id,
+                        IpPermissions=[neptune_rule]
+                    )
+                    logger.info("✓ Security group ingress rule added")
+                except ClientError as e:
+                    if e.response['Error']['Code'] != 'InvalidPermission.Duplicate':
+                        raise
+                    logger.info("Rule already exists, skipping...")
+        
+        # Configure egress rules
+        egress_rules = [
+            {
+                'IpProtocol': '-1',  # All traffic
+                'FromPort': -1,
+                'ToPort': -1,
+                'IpRanges': [{
+                    'CidrIp': '0.0.0.0/0',
+                    'Description': 'Allow all outbound traffic'
+                }]
+            },
+            {
+                'IpProtocol': 'tcp',
+                'FromPort': 8182,
+                'ToPort': 8182,
+                'UserIdGroupPairs': [{
+                    'GroupId': sg_id,
+                    'Description': 'Allow Neptune cluster communication'
+                }]
+            }
+        ]
+        
+        for egress_rule in egress_rules:
+            try:
+                ec2_client.authorize_security_group_egress(
+                    GroupId=sg_id,
+                    IpPermissions=[egress_rule]
+                )
+                logger.info("✓ Security group egress rule added")
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'InvalidPermission.Duplicate':
+                    raise
+                logger.info("Egress rule already exists, skipping...")
+        
+        logger.info("✓ All security group rules configured successfully")
         return True
+        
     except ClientError as e:
         if e.response['Error']['Code'] == 'InvalidPermission.Duplicate':
             logger.info("✓ Security group rules already exist")
@@ -148,7 +196,9 @@ def configure_vpc_access():
     try:
         # Initialize boto3 clients with retry configuration
         logger.info("Initializing AWS clients...")
+        # Get region from environment or use us-east-1 as default
         region = os.getenv('AWS_REGION', 'us-east-1')
+        logger.info(f"Configuring AWS resources in region: {region}")
         config = Config(
             region_name=region,
             retries={
@@ -217,15 +267,31 @@ def configure_vpc_access():
                 # Create VPC endpoint for Neptune service
                 logger.info("Creating VPC endpoint for Neptune service...")
                 try:
-                    ec2.create_vpc_endpoint(
+                    vpc_endpoint = ec2.create_vpc_endpoint(
                         VpcId=vpc_id,
-                        ServiceName=f'com.amazonaws.{region}.neptune-db',
+                        ServiceName=f'com.amazonaws.{region}.neptune',
                         VpcEndpointType='Interface',
                         SecurityGroupIds=[sg_id],
                         SubnetIds=subnet_ids,
-                        PrivateDnsEnabled=True
+                        PrivateDnsEnabled=True,
+                        TagSpecifications=[{
+                            'ResourceType': 'vpc-endpoint',
+                            'Tags': [{
+                                'Key': 'Name',
+                                'Value': f'neptune-endpoint-{cluster_id}'
+                            }]
+                        }]
                     )
                     logger.info("✓ VPC endpoint created successfully")
+                    
+                    # Wait for the endpoint to become available
+                    waiter = ec2.get_waiter('vpc_endpoint_available')
+                    waiter.wait(
+                        VpcEndpointIds=[vpc_endpoint['VpcEndpoint']['VpcEndpointId']],
+                        WaiterConfig={'Delay': 15, 'MaxAttempts': 40}
+                    )
+                    logger.info("✓ VPC endpoint is now available")
+                    
                 except ClientError as e:
                     if 'InvalidServiceName' in str(e):
                         logger.warning("Neptune service endpoint not available in this region")

@@ -8,7 +8,10 @@ from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import __
 from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.driver import serializer
+from gremlin_python.driver.aiohttp.transport import AiohttpTransport
+# Using aiohttp transport exclusively
 from datetime import datetime
+import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -90,16 +93,37 @@ def test_neptune_connection():
                 logger.info(f"\nAttempt {retry_count + 1} of {max_retries}")
                 logger.info(f"Connecting to Neptune at wss://{endpoint}:8182/gremlin")
                 
+                logger.info(f"Creating DriverRemoteConnection with url 'wss://{endpoint}:8182/gremlin'")
+                # Configure event loop for async operations
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
                 connection = DriverRemoteConnection(
                     f'wss://{endpoint}:8182/gremlin',
                     'g',
-                    message_serializer=serializer.GraphSONSerializersV2d0()
+                    message_serializer=serializer.GraphSONSerializersV2d0(),
+                    transport_factory=lambda: AiohttpTransport(
+                        call_from_event_loop=True,
+                        read_timeout=60,
+                        write_timeout=60,
+                        max_retries=3,
+                        pool_size=1
+                    )
                 )
+                logger.info("Successfully created DriverRemoteConnection")
+                logger.info("Creating GraphTraversalSource.")
                 
                 # Test connection by creating traversal source
+                logger.info("Creating traversal source...")
                 g = traversal().withRemote(connection)
+                
                 # Verify connection with a simple query
-                g.V().limit(1).count().next()
+                logger.info("Testing connection with a simple vertex query...")
+                count = g.V().limit(1).count().next()
+                logger.info(f"✓ Query executed successfully (found {count} vertices)")
                 
                 logger.info("✓ Successfully established connection to Neptune")
                 break

@@ -33,7 +33,9 @@ dependencies = [
     "qdrant-client>=1.12.1",
     "pinecone-client>=5.0.1",
     "pinecone",
-    "gremlinpython>=3.7.3",
+    "gremlinpython==3.7.1",
     "boto3>=1.35.78",
     "botocore",
+    "websockets>=14.1",
+    "aiohttp>=3.11.10",
 ]
