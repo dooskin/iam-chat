@@ -67,49 +67,92 @@ class GraphSchema:
             try:
                 logger.info("Initializing Neo4j driver...")
                 
-                # Analyze URI format
+                # Validate and parse URI
                 if not self.uri or '://' not in self.uri:
                     raise ConfigurationError("Invalid Neo4j URI format")
-                    
+                
+                # Parse URI components
                 uri_scheme, uri_path = self.uri.split('://', 1)
-                logger.info(f"Neo4j URI analysis:")
+                logger.info(f"Neo4j URI components:")
+                logger.info(f"- Full URI: {self.uri}")
                 logger.info(f"- Scheme: {uri_scheme}")
-                logger.info(f"- Authentication present: {'@' in uri_path}")
-                logger.info(f"- Protocol: {'bolt' if 'bolt' in uri_scheme else 'neo4j'}")
+                if '@' in uri_path:
+                    host = uri_path.split('@')[1]
+                else:
+                    host = uri_path
+                if ':' in host:
+                    host = host.split(':')[0]
+                logger.info(f"- Host: {host}")
                 
-                # Keep connection config minimal to avoid conflicts with URI settings
-                logger.info("Creating Neo4j driver with basic auth...")
-                self.driver = GraphDatabase.driver(
-                    self.uri,
-                    auth=(self.user, self.password)
-                )
+                # DNS resolution test
+                import socket
+                try:
+                    logger.info(f"Attempting DNS resolution for {host}...")
+                    ip_address = socket.gethostbyname(host)
+                    logger.info(f"DNS resolution successful: {host} -> {ip_address}")
+                except socket.gaierror as e:
+                    logger.error(f"DNS resolution failed for {host}: {str(e)}")
+                    raise ConfigurationError(f"Cannot resolve Neo4j host: {host}")
                 
-                # Simple connectivity test with detailed diagnostics
+                # Initialize driver with Aura-specific configuration
+                logger.info("Creating Neo4j driver with Aura configuration...")
+                driver_config = {
+                    'auth': (self.user, self.password),
+                    'connection_timeout': 60,
+                    'keep_alive': True,
+                    'max_connection_lifetime': 3600,  # 1 hour max connection lifetime for Aura
+                    'max_connection_pool_size': 50,   # Aura recommended pool size
+                    'connection_acquisition_timeout': 60
+                }
+                
+                logger.info("Configuring Neo4j driver with Aura-specific settings...")
+                for key, value in driver_config.items():
+                    if key != 'auth':  # Don't log auth details
+                        logger.info(f"- {key}: {value}")
+                
+                self.driver = GraphDatabase.driver(self.uri, **driver_config)
+                
+                # Detailed connectivity test with diagnostics and Aura-specific retry logic
                 retry_count = 0
-                max_retries = 3
+                max_retries = 5  # Increased for Aura's initial connection delay
+                last_error = None
+                initial_delay = 2  # seconds
                 
                 while retry_count < max_retries:
                     try:
                         logger.info(f"Verifying Neo4j connectivity (attempt {retry_count + 1}/{max_retries})")
                         
-                        # Basic connectivity check
+                        # Step 1: Basic connectivity check
+                        logger.info("Step 1: Verifying basic connectivity...")
                         self.driver.verify_connectivity()
-                        logger.info("Basic connectivity check passed")
+                        logger.info("✓ Basic connectivity check passed")
                         
-                        # Version and capability check
+                        # Step 2: Session creation test
+                        logger.info("Step 2: Testing session creation...")
                         with self.driver.session() as session:
+                            # Step 3: Basic query execution
+                            logger.info("Step 3: Testing basic query execution...")
+                            test_result = session.run("RETURN 1 as test").single()
+                            if not test_result or test_result.get("test") != 1:
+                                raise ValueError("Basic query execution failed")
+                            logger.info("✓ Basic query execution successful")
+                            
+                            # Step 4: Version and capability check
+                            logger.info("Step 4: Checking Neo4j version and capabilities...")
                             version_info = session.run("CALL dbms.components() YIELD name, versions, edition").single()
                             if version_info:
-                                logger.info(f"Connected to Neo4j {version_info['name']} {version_info['edition']}")
-                                logger.info(f"Version: {version_info['versions'][0]}")
+                                logger.info(f"✓ Connected to Neo4j {version_info['name']} {version_info['edition']}")
+                                logger.info(f"✓ Version: {version_info['versions'][0]}")
+                            else:
+                                logger.warning("! Could not retrieve Neo4j version information")
                             
-                            # Simple query test
-                            test_result = session.run("RETURN 1 as test").single()
-                            if test_result and test_result["test"] == 1:
-                                logger.info("Query execution test passed")
-                                return  # Success - exit the retry loop
+                            # Step 5: Constraints check
+                            logger.info("Step 5: Verifying database permissions...")
+                            perm_test = session.run("SHOW CONSTRAINTS").consume()
+                            logger.info("✓ Database permissions verified")
                             
-                        logger.error("Query execution test failed - unexpected result")
+                        logger.info("All connection tests passed successfully!")
+                        return  # Success - exit the retry loop
                         
                     except AuthError as e:
                         error_msg = f"Neo4j authentication failed: {str(e)}"
@@ -119,14 +162,25 @@ class GraphSchema:
                     except ServiceUnavailable as e:
                         retry_count += 1
                         if retry_count == max_retries:
-                            error_msg = f"Neo4j service unavailable after {max_retries} attempts: {str(e)}"
+                            error_msg = f"Neo4j Aura service unavailable after {max_retries} attempts: {str(e)}"
                             logger.error(error_msg)
+                            logger.error("Please ensure:")
+                            logger.error("1. The Aura instance is fully initialized (can take up to 60s)")
+                            logger.error("2. The connection URI uses neo4j+s:// scheme")
+                            logger.error("3. The instance is in the 'running' state in the Neo4j Aura console")
                             raise ValueError(error_msg) from e
                             
-                        wait_time = 2 ** retry_count
-                        logger.warning(f"Connection attempt {retry_count} failed. Retrying in {wait_time}s...")
+                        wait_time = initial_delay * (2 ** (retry_count - 1))  # Exponential backoff
+                        logger.warning(f"Connection attempt {retry_count}/{max_retries} failed.")
+                        logger.warning(f"Waiting {wait_time}s for Aura instance initialization...")
                         import time
                         time.sleep(wait_time)
+                        
+                        # Additional Aura-specific connection diagnostics
+                        logger.info(f"Retry {retry_count} diagnostics:")
+                        logger.info(f"- Last error: {str(e)}")
+                        logger.info(f"- Total wait time: {sum(initial_delay * (2 ** i) for i in range(retry_count))}s")
+                        logger.info(f"- Next retry in: {wait_time}s")
                         
                     except ConfigurationError as e:
                         error_msg = f"Neo4j configuration error: {str(e)}"

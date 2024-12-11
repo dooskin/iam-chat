@@ -11,10 +11,30 @@ def test_neo4j_connection():
     """Test Neo4j connection, schema initialization, and validation."""
     try:
         # Log environment configuration (without sensitive data)
-        logger.info("Testing Neo4j connection with following configuration:")
-        logger.info(f"NEO4J_URI configured: {bool(os.getenv('NEO4J_URI'))}")
-        logger.info(f"NEO4J_USER configured: {bool(os.getenv('NEO4J_USER'))}")
-        logger.info(f"NEO4J_PASSWORD configured: {bool(os.getenv('NEO4J_PASSWORD'))}")
+        logger.info("=== Starting Neo4j Connection Test ===")
+        logger.info("Checking environment configuration:")
+        
+        # Check environment variables
+        env_vars = {
+            'NEO4J_URI': os.getenv('NEO4J_URI'),
+            'NEO4J_USER': os.getenv('NEO4J_USER'),
+            'NEO4J_PASSWORD': os.getenv('NEO4J_PASSWORD')
+        }
+        
+        for var, value in env_vars.items():
+            if value:
+                logger.info(f"✓ {var} is configured")
+                if var == 'NEO4J_URI':
+                    # Validate URI format without exposing sensitive data
+                    uri_parts = value.split('://')
+                    if len(uri_parts) == 2:
+                        protocol, _ = uri_parts
+                        logger.info(f"✓ URI Protocol: {protocol}")
+                    else:
+                        logger.error("✗ Invalid URI format")
+            else:
+                logger.error(f"✗ {var} is missing")
+                return False
         
         # Initialize GraphSchema
         logger.info("Initializing Graph Schema...")
