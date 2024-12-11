@@ -24,21 +24,38 @@ class GraphSchema:
             raise ValueError("Missing OpenAI API key")
         self.openai = OpenAI(api_key=openai_api_key)
         
-        # Validate Neo4j credentials
-        if not all([self.uri, self.user, self.password]):
-            raise ValueError("Missing required Neo4j connection parameters")
-            
-        # Ensure URI has proper scheme and format
-        if not self.uri.startswith(('neo4j://', 'neo4j+s://', 'bolt://', 'bolt+s://')):
-            if '.databases.neo4j.io' in self.uri:
-                self.uri = f"neo4j+s://{self.uri}"
-            else:
-                self.uri = f"bolt://{self.uri}"
-            
-        logger.info(f"Attempting to connect to Neo4j at {self.uri}")
+        # Log Neo4j connection parameters (without sensitive data)
+        logger.info(f"Initializing Neo4j connection with URI: {self.uri}")
+        logger.info(f"Neo4j user configured: {bool(self.user)}")
+        logger.info(f"Neo4j password configured: {bool(self.password)}")
         
+        # Validate Neo4j credentials
+        if not self.uri:
+            raise ValueError("Missing NEO4J_URI environment variable")
+        if not self.user:
+            raise ValueError("Missing NEO4J_USER environment variable")
+        if not self.password:
+            raise ValueError("Missing NEO4J_PASSWORD environment variable")
+            
+        # Initialize driver with proper error handling
         try:
-            # Initialize Neo4j driver with robust error handling and retry configuration
+            from neo4j.exceptions import ServiceUnavailable, AuthError
+            
+            # Ensure URI has proper scheme and format
+            if not self.uri.startswith(('neo4j://', 'neo4j+s://', 'bolt://', 'bolt+s://')):
+                if 'databases.neo4j.io' in self.uri:
+                    self.uri = f"neo4j+s://{self.uri}"
+                else:
+                    self.uri = f"bolt://{self.uri}"
+            
+            # Ensure port is specified
+            if not any(f":{port}" in self.uri for port in ['7687', '7474']):
+                self.uri = f"{self.uri}:7687"
+            
+            logger.info(f"Attempting to connect to Neo4j at {self.uri}")
+            
+            # Initialize Neo4j driver with robust error handling
+            logger.info("Creating Neo4j driver with configured parameters...")
             self.driver = GraphDatabase.driver(
                 self.uri,
                 auth=(self.user, self.password),
@@ -46,7 +63,7 @@ class GraphSchema:
                 max_connection_pool_size=50,
                 connection_acquisition_timeout=60,
                 connection_timeout=30,
-                encrypted=True if '+s://' in self.uri else False,
+                encrypted=True if 'neo4j+s://' in self.uri else False,
                 trust='TRUST_SYSTEM_CA_SIGNED_CERTIFICATES'
             )
             
@@ -55,16 +72,25 @@ class GraphSchema:
             max_retries = 3
             while retry_count < max_retries:
                 try:
+                    logger.info(f"Attempting to verify Neo4j connectivity (attempt {retry_count + 1}/{max_retries})")
                     self.driver.verify_connectivity()
                     logger.info("Successfully connected to Neo4j database")
                     break
-                except Exception as e:
+                except AuthError as e:
+                    logger.error(f"Authentication failed: {str(e)}")
+                    raise ValueError("Neo4j authentication failed - please check credentials") from e
+                except ServiceUnavailable as e:
                     retry_count += 1
                     if retry_count == max_retries:
-                        raise
-                    logger.warning(f"Connection attempt {retry_count} failed: {str(e)}. Retrying...")
+                        logger.error(f"Failed to connect after {max_retries} attempts")
+                        raise ValueError(f"Unable to establish Neo4j connection: {str(e)}") from e
+                    logger.warning(f"Connection attempt {retry_count} failed: {str(e)}. Retrying in {2 ** retry_count} seconds...")
                     import time
                     time.sleep(2 ** retry_count)  # Exponential backoff
+                except Exception as e:
+                    logger.error(f"Unexpected error during Neo4j connection: {str(e)}")
+                    raise ValueError(f"Unexpected error connecting to Neo4j: {str(e)}") from e
+                    
         except Exception as e:
             logger.error(f"Failed to connect to Neo4j: {str(e)}")
             logger.error("Please verify your Neo4j URI, username, and password")
@@ -174,7 +200,7 @@ class GraphSchema:
                 
                 # Validate required components
                 required_labels = {'Asset', 'User', 'Role', 'Group', 'ServiceAccount', 'GCPProject'}
-                required_indexes = {'vector_similarity_idx', 'asset_type_idx', 'embedding_idx'}
+                required_indexes = {'asset_type_idx', 'embedding_idx', 'vector_similarity_idx'}
                 
                 existing_labels = set()
                 existing_indexes = set()
@@ -201,84 +227,6 @@ class GraphSchema:
         except Exception as e:
             logger.error(f"Schema validation failed: {str(e)}")
             return False
-
-    def create_or_update_asset(self, asset_data: Dict[str, Any]) -> None:
-        """Create or update an asset node with enhanced Cartography compatibility."""
-        try:
-            with self.driver.session() as session:
-                # Base asset creation/update query
-                query = """
-                MERGE (a:Asset {id: $id})
-                SET 
-                    a.name = $name,
-                    a.type = $type,
-                    a.platform = $platform,
-                    a.metadata = $metadata,
-                    a.last_updated = timestamp(),
-                    a.firstseen = CASE
-                        WHEN NOT EXISTS(a.firstseen) THEN timestamp()
-                        ELSE a.firstseen
-                    END,
-                    a.lastupdated = timestamp(),
-                    a.location = $location,
-                    a.environment = $environment,
-                    a.owner = $owner,
-                    a.tag_list = $tags,
-                    a:ASSET  // Cartography standard label
-                WITH a
-                CALL {
-                    WITH a
-                    MATCH (a)-[r:TAGGED]->(t:Tag)
-                    WHERE NOT t.name IN $tags
-                    DELETE r
-                }
-                WITH a
-                UNWIND $tags as tag_name
-                MERGE (t:Tag {name: tag_name})
-                MERGE (a)-[:TAGGED]->(t)
-                """
-                
-                session.run(
-                    query,
-                    id=asset_data['id'],
-                    name=asset_data['name'],
-                    type=asset_data['type'],
-                    platform=asset_data['platform'],
-                    metadata=json.dumps(asset_data.get('metadata', {})),
-                    location=asset_data.get('location', ''),
-                    environment=asset_data.get('environment', 'production'),
-                    owner=asset_data.get('owner', ''),
-                    tags=asset_data.get('tags', [])
-                )
-                
-                # Process relationships if defined
-                if 'relationships' in asset_data:
-                    self._create_relationships(asset_data['id'], asset_data['relationships'])
-                
-        except Exception as e:
-            logger.error(f"Error creating/updating asset: {str(e)}")
-            raise
-
-    def _create_relationships(self, source_id: str, relationships: List[Dict[str, str]]) -> None:
-        """Create relationships between assets."""
-        try:
-            with self.driver.session() as session:
-                for rel in relationships:
-                    query = """
-                    MATCH (a:Asset {id: $source_id})
-                    MATCH (b:Asset {id: $target_id})
-                    MERGE (a)-[r:$rel_type]->(b)
-                    SET r.lastupdated = timestamp()
-                    """
-                    session.run(
-                        query,
-                        source_id=source_id,
-                        target_id=rel['target_id'],
-                        rel_type=rel['type']
-                    )
-        except Exception as e:
-            logger.error(f"Error creating relationships: {str(e)}")
-            raise
 
     def create_node_embedding(self, node_id: str, node_type: str, text_content: str) -> None:
         """Create vector embedding for a node using OpenAI."""
@@ -389,3 +337,51 @@ class GraphSchema:
             self.driver.close()
         except Exception as e:
             logger.error(f"Error closing Neo4j connection: {str(e)}")
+
+    def create_or_update_user(self, user_data: Dict[str, Any]) -> None:
+        """
+        Create or update a user node in the graph database.
+        
+        Args:
+            user_data: Dictionary containing user information
+            
+        Raises:
+            ValueError: If required user data is missing
+        """
+        try:
+            required_fields = ['id', 'email']
+            if not all(field in user_data for field in required_fields):
+                raise ValueError(f"Missing required user fields: {required_fields}")
+            
+            with self.driver.session() as session:
+                # Create or update user node with Cartography-compatible properties
+                query = """
+                MERGE (u:User {id: $id})
+                SET u.email = $email,
+                    u.name = $name,
+                    u.title = $title,
+                    u.department = $department,
+                    u.lastupdated = timestamp(),
+                    u.platform = 'internal',
+                    u.type = 'employee'
+                RETURN u
+                """
+                
+                result = session.run(
+                    query,
+                    id=user_data['id'],
+                    email=user_data['email'],
+                    name=user_data.get('name', ''),
+                    title=user_data.get('title', ''),
+                    department=user_data.get('department', '')
+                )
+                
+                user_node = result.single()
+                if not user_node:
+                    raise ValueError(f"Failed to create/update user with ID: {user_data['id']}")
+                    
+                logger.info(f"Successfully created/updated user: {user_data['id']}")
+                
+        except Exception as e:
+            logger.error(f"Error creating/updating user: {str(e)}")
+            raise ValueError(f"Failed to create/update user: {str(e)}") from e

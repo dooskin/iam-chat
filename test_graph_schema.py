@@ -21,18 +21,18 @@ def test_neo4j_connection():
         
         while retry_count < max_retries:
             try:
-                if graph.test_connection():
-                    logger.info("Successfully connected to Neo4j")
-                    break
+                # Test connection using driver's verify_connectivity method
+                graph.driver.verify_connectivity()
+                logger.info("Successfully connected to Neo4j")
+                break
+            except Exception as e:
                 retry_count += 1
                 if retry_count == max_retries:
-                    raise Exception("Failed to establish Neo4j connection after multiple attempts")
-                logger.warning(f"Connection attempt {retry_count} failed. Retrying...")
+                    logger.error("Failed to establish Neo4j connection after multiple attempts")
+                    raise
+                logger.warning(f"Connection attempt {retry_count} failed: {str(e)}. Retrying...")
                 import time
                 time.sleep(2 ** retry_count)  # Exponential backoff
-            except Exception as e:
-                logger.error(f"Connection attempt {retry_count} failed: {str(e)}")
-                raise
         
         # Initialize and validate schema
         logger.info("Initializing schema...")
