@@ -7,12 +7,19 @@ from openai import OpenAI
 from contextlib import contextmanager
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Configure logging
+# Configure logging first
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Load environment variables from .env file
+logger.info("Loading environment variables from .env file...")
+load_dotenv(override=True)  # Force override existing env vars
+
+# Debug: Print loaded environment variables (without exposing sensitive values)
+logger.info("Environment variables loaded:")
+logger.info(f"NEO4J_URI configured: {bool(os.getenv('NEO4J_URI'))}")
+logger.info(f"NEO4J_USERNAME configured: {bool(os.getenv('NEO4J_USERNAME'))}")
+logger.info(f"NEO4J_PASSWORD configured: {bool(os.getenv('NEO4J_PASSWORD'))}")
 
 class GraphSchema:
     """Graph database schema manager with vector embeddings support."""
@@ -22,13 +29,30 @@ class GraphSchema:
         try:
             # Get configuration from environment with explicit defaults from .env
             self.uri = os.getenv('NEO4J_URI')
-            self.user = os.getenv('NEO4J_USER')  # Changed to match .env file
+            self.user = os.getenv('NEO4J_USERNAME')  # Using the exact name from .env file
             self.password = os.getenv('NEO4J_PASSWORD')
-            self.openai_key = os.getenv('OPENAI_API_KEY')
+            
+            # Initialize OpenAI client
+            self.openai = OpenAI()
+            logger.info("OpenAI client initialized successfully")
             
             # Debug environment variables
-            logger.info(f"Loaded NEO4J_URI value: {self.uri}")
-            logger.info(f"Loaded NEO4J_USER value: {bool(self.user)}")  # Log only presence
+            logger.info("Neo4j Connection Configuration:")
+            logger.info(f"URI: {self.uri}")
+            logger.info(f"Username (NEO4J_USERNAME) present: {bool(self.user)}")
+            logger.info(f"Password (NEO4J_PASSWORD) present: {bool(self.password)}")
+            
+            # Validate Neo4j URI format
+            if self.uri:
+                uri_parts = self.uri.split('://')
+                if len(uri_parts) == 2:
+                    protocol, host = uri_parts
+                    logger.info(f"URI Protocol: {protocol}")
+                    logger.info(f"URI Host: {host}")
+                    if not (protocol == 'neo4j+s' and '.databases.neo4j.io' in host):
+                        logger.warning("URI format may not be correct for Neo4j Aura")
+                else:
+                    logger.error("Invalid URI format")
             
             # Validate configuration
             if not all([self.uri, self.user, self.password]):

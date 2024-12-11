@@ -17,9 +17,23 @@ def test_neo4j_connection():
         # Check environment variables
         env_vars = {
             'NEO4J_URI': os.getenv('NEO4J_URI'),
-            'NEO4J_USER': os.getenv('NEO4J_USER'),
+            'NEO4J_USERNAME': os.getenv('NEO4J_USERNAME'),
             'NEO4J_PASSWORD': os.getenv('NEO4J_PASSWORD')
         }
+        
+        # Validate URI format and print for debugging
+        if env_vars['NEO4J_URI']:
+            uri = env_vars['NEO4J_URI']
+            logger.info(f"Neo4j URI validation:")
+            logger.info(f"  - Full URI (without credentials): {uri}")
+            uri_parts = uri.split('://')
+            if len(uri_parts) == 2:
+                protocol, host = uri_parts
+                logger.info(f"  - Protocol: {protocol}")
+                logger.info(f"  - Host: {host}")
+                logger.info(f"  - Expected format: neo4j+s://<instance-id>.databases.neo4j.io")
+            else:
+                logger.error("Invalid URI format")
         
         for var, value in env_vars.items():
             if value:
