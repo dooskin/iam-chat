@@ -7,7 +7,7 @@ import time
 from functools import wraps
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.utils import secure_filename
-from pdfminer.high_level import extract_text
+from PyPDF2 import PdfReader
 from openai import OpenAI
 from contextlib import contextmanager
 from database import db
@@ -135,7 +135,7 @@ def validate_rule(rule_data: Dict[str, Any]) -> bool:
 
 def extract_pdf_text(file_path: str) -> str:
     """
-    Extract text content from a PDF file.
+    Extract text content from a PDF file using PyPDF2.
     
     Args:
         file_path: Path to the PDF file
@@ -147,10 +147,25 @@ def extract_pdf_text(file_path: str) -> str:
         PDFExtractionError: If text extraction fails
     """
     try:
-        text = extract_text(file_path)
-        if not text:
-            raise PDFExtractionError("No text content extracted from PDF")
-        return text
+        with open(file_path, 'rb') as file:
+            # Create PDF reader object
+            pdf = PdfReader(file)
+            
+            # Extract text from all pages
+            text_content = []
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    text_content.append(text)
+            
+            # Combine all text with proper spacing
+            full_text = '\n\n'.join(text_content)
+            
+            if not full_text.strip():
+                raise PDFExtractionError("No text content extracted from PDF")
+                
+            return full_text
+            
     except Exception as e:
         logger.error(f"Error extracting text from PDF: {str(e)}")
         raise PDFExtractionError(f"Failed to extract text: {str(e)}") from e
