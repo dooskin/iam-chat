@@ -72,6 +72,17 @@ def test_graph_rag_system():
             }
         ]
         
+        # Create test nodes with embeddings
+        logger.info("Creating test nodes with embeddings...")
+        for node in test_nodes:
+            graph.create_node_embedding(
+                node_id=node['id'],
+                node_type=node['type'],
+                text_content=node['content'],
+                metadata=node['metadata']
+            )
+        logger.info("✓ Successfully created test nodes with embeddings")
+        
         # Define relationships between test nodes
         relationships = [
             {
@@ -94,17 +105,6 @@ def test_graph_rag_system():
                 }
             }
         ]
-        
-        # Create test nodes with embeddings
-        logger.info("Creating test nodes with embeddings...")
-        for node in test_nodes:
-            graph.create_node_embedding(
-                node_id=node['id'],
-                node_type=node['type'],
-                text_content=node['content'],
-                metadata=node['metadata']
-            )
-        logger.info("✓ Successfully created test nodes with embeddings")
         
         # Create relationships between test nodes
         logger.info("Creating relationships between test nodes...")
@@ -155,7 +155,7 @@ def test_graph_rag_system():
     finally:
         # Clean up test data
         try:
-            if 'graph' in locals() and 'test_nodes' in locals():
+            if graph and 'test_nodes' in locals():
                 with graph.driver.session() as session:
                     session.run("""
                         MATCH (n)
@@ -163,17 +163,15 @@ def test_graph_rag_system():
                         DETACH DELETE n
                     """, ids=[node['id'] for node in test_nodes])
                 logger.info("Test data cleaned up")
-                graph.close()
-            elif 'graph' in locals():
+            if graph:
                 graph.close()
         except Exception as e:
             logger.error(f"Error cleaning up test data: {str(e)}")
-            if 'graph' in locals():
+            if graph:
                 try:
                     graph.close()
                 except Exception as cleanup_error:
-                    logger.error(f"Error closing graph connection: {cleanup_error}")
-                    pass
+                    logger.error(f"Error closing graph connection: {str(cleanup_error)}")
 
 if __name__ == "__main__":
     test_graph_rag_system()

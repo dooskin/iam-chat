@@ -11,17 +11,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def verify_connection():
-    """Verify Neo4j Aura connection with detailed logging."""
+    """Verify Neo4j Aura connection with detailed logging and enhanced error handling."""
     driver = None
     try:
-        # Load environment variables
+        # Load environment variables with explicit logging
         load_dotenv()
+        logger.info("Loading Neo4j connection parameters...")
         
-        # Get connection details with explicit instance ID
+        # Get connection details
         uri = os.getenv('NEO4J_URI')
         username = os.getenv('NEO4J_USERNAME')
         password = os.getenv('NEO4J_PASSWORD')
-        instance_id = 'a9902166'  # Hardcoded for this specific instance
+        instance_id = uri.split('://')[1].split('.')[0] if uri else None
         
         # Validate connection parameters with detailed logging
         logger.info("=== Neo4j Connection Validation ===")
@@ -96,12 +97,32 @@ def verify_connection():
                     component = result.single()
                     logger.info(f"✓ Neo4j Server Version: {component['name']} {component['version']}")
                     
-                    # Test database info using system procedure
-                    result = session.run("CALL dbms.database.state() YIELD name, currentStatus")
+                    # Test database access and capabilities
+                    result = session.run("""
+                        CALL db.info()
+                        YIELD name, type, address, currentStatus
+                        RETURN name, type, address, currentStatus
+                    """)
                     db_info = result.single()
-                    logger.info(f"✓ Connected to database: {db_info['name']} (Status: {db_info['currentStatus']})")
+                    logger.info("=== Database Information ===")
+                    logger.info(f"• Name: {db_info['name']}")
+                    logger.info(f"• Type: {db_info['type']}")
+                    logger.info(f"• Address: {db_info['address']}")
+                    logger.info(f"• Status: {db_info['currentStatus']}")
                     
-                    break  # If we get here, all tests passed
+                    # Additional connectivity verification
+                    result = session.run("""
+                        CALL dbms.components()
+                        YIELD name, versions, edition
+                        RETURN name, versions[0] as version, edition
+                    """)
+                    component = result.single()
+                    logger.info("\n=== Neo4j Component Information ===")
+                    logger.info(f"• Component: {component['name']}")
+                    logger.info(f"• Version: {component['version']}")
+                    logger.info(f"• Edition: {component['edition']}")
+                    
+                    break  # All tests passed
                     
             except Exception as e:
                 retry_count += 1

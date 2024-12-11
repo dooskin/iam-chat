@@ -75,42 +75,74 @@ class GraphSchema:
         """Initialize the graph database schema with Cartography compatibility."""
         try:
             with self.driver.session() as session:
-                # Create constraints for core nodes
+                # Create constraints for core nodes with improved error handling
                 constraints = [
-                    ("User", "user_id"),
-                    ("Resource", "resource_id"),
-                    ("Group", "group_id"),
-                    ("Role", "role_id"),
-                    ("Application", "application_id"),
-                    ("Device", "device_id"),
-                    ("Network", "network_id")
+                    ("User", "user_id", "id"),
+                    ("Resource", "resource_id", "id"),
+                    ("Group", "group_id", "id"),
+                    ("Role", "role_id", "id"),
+                    ("Application", "application_id", "id"),
+                    ("Device", "device_id", "id"),
+                    ("Network", "network_id", "id")
                 ]
                 
-                # Create constraints with error handling
-                for node_type, constraint_name in constraints:
+                # Create constraints with enhanced error handling and validation
+                for node_type, constraint_name, property_name in constraints:
                     try:
-                        session.run(f"""
-                            CREATE CONSTRAINT {constraint_name} IF NOT EXISTS
-                            FOR (n:{node_type}) REQUIRE n.id IS UNIQUE
-                        """)
-                        logger.info(f"Created/verified constraint: {constraint_name}")
+                        # Check if constraint already exists
+                        existing_constraints = session.run("SHOW CONSTRAINTS").data()
+                        constraint_exists = any(
+                            c.get('name') == constraint_name for c in existing_constraints
+                        )
+                        
+                        if not constraint_exists:
+                            session.run(f"""
+                                CREATE CONSTRAINT {constraint_name} IF NOT EXISTS
+                                FOR (n:{node_type}) REQUIRE n.{property_name} IS UNIQUE
+                            """)
+                            logger.info(f"Created new constraint: {constraint_name}")
+                        else:
+                            logger.info(f"Constraint already exists: {constraint_name}")
                     except Exception as e:
-                        logger.warning(f"Error creating constraint {constraint_name}: {str(e)}")
+                        if "An equivalent constraint already exists" in str(e):
+                            logger.info(f"Constraint already exists: {constraint_name}")
+                        else:
+                            logger.warning(f"Error creating constraint {constraint_name}: {str(e)}")
+                            logger.warning("Continuing with schema initialization...")
                 
-                # Create vector search indices
+                # Create vector search indices with improved Aura compatibility
                 core_types = ['User', 'Resource', 'Group', 'Role', 'Application']
                 
-                # Vector embedding indices
+                # Vector embedding indices with validation
                 for node_type in core_types:
+                    index_name = f"{node_type.lower()}_vector_idx"
                     try:
-                        session.run(f"""
-                            CREATE INDEX {node_type.lower()}_vector_idx IF NOT EXISTS
-                            FOR (n:{node_type})
-                            ON (n.embedding)
-                        """)
-                        logger.info(f"Created/verified vector index for {node_type}")
+                        # Check if index already exists
+                        existing_indexes = session.run("SHOW INDEXES").data()
+                        index_exists = any(
+                            idx.get('name') == index_name for idx in existing_indexes
+                        )
+                        
+                        if not index_exists:
+                            # Create vector index with explicit type for Aura compatibility
+                            session.run(f"""
+                                CREATE VECTOR INDEX {index_name} IF NOT EXISTS
+                                FOR (n:{node_type})
+                                ON (n.embedding)
+                                OPTIONS {{indexConfig: {{
+                                    `vector.dimensions`: 1536,
+                                    `vector.similarity_function`: 'cosine'
+                                }}}}
+                            """)
+                            logger.info(f"Created new vector index for {node_type}")
+                        else:
+                            logger.info(f"Vector index already exists for {node_type}")
                     except Exception as e:
-                        logger.warning(f"Error creating vector index for {node_type}: {str(e)}")
+                        if "An equivalent index already exists" in str(e):
+                            logger.info(f"Vector index already exists for {node_type}")
+                        else:
+                            logger.warning(f"Error creating vector index for {node_type}: {str(e)}")
+                            logger.warning("Continuing with schema initialization...")
                 
                 # Cartography sync timestamp indices
                 for node_type in core_types:
@@ -178,18 +210,26 @@ class GraphSchema:
                     return False
                 
                 # Validate Cartography-specific indices
+                # Validate Cartography-specific indices
                 try:
-                    session.run("""
-                        CREATE INDEX user_lastupdated IF NOT EXISTS
-                        FOR (u:User) ON (u.lastupdated)
-                    """)
-                    session.run("""
-                        CREATE INDEX resource_lastupdated IF NOT EXISTS
-                        FOR (r:Resource) ON (r.lastupdated)
-                    """)
-                    logger.info("Cartography indices validated")
+                    cartography_indices = [
+                        ('User', ['lastupdated', 'firstseen', 'email']),
+                        ('Resource', ['lastupdated', 'firstseen', 'resource_type']),
+                        ('Group', ['lastupdated', 'firstseen', 'group_type']),
+                        ('Role', ['lastupdated', 'firstseen', 'role_type']),
+                        ('Application', ['lastupdated', 'firstseen', 'app_type'])
+                    ]
+                    
+                    for node_type, properties in cartography_indices:
+                        for prop in properties:
+                            session.run(f"""
+                                CREATE INDEX {node_type.lower()}_{prop} IF NOT EXISTS
+                                FOR (n:{node_type}) ON (n.{prop})
+                            """)
+                    logger.info("Cartography indices validated and created")
                 except Exception as e:
-                    logger.warning(f"Could not create Cartography indices: {str(e)}")
+                    logger.warning(f"Could not create all Cartography indices: {str(e)}")
+                    logger.warning("Some Cartography features may be limited")
                 
                 logger.info("Schema validation successful")
                 return True
@@ -225,18 +265,23 @@ class GraphSchema:
             if metadata:
                 node_metadata.update(metadata)
             
-            # Store embedding with flattened metadata in Neo4j
+            # Store embedding with Cartography-compatible metadata in Neo4j
             with self.driver.session() as session:
                 query = """
-                MATCH (n)
-                WHERE n.id = $node_id AND $node_type in labels(n)
-                SET n.embedding = $embedding,
+                MERGE (n:Entity {id: $node_id})
+                SET n:$node_type,
+                    n.embedding = $embedding,
                     n.text_content = $text_content,
                     n.embedding_model = $embedding_model,
                     n.last_updated = $last_updated,
                     n.content_length = $content_length,
                     n.last_embedded = timestamp(),
-                    n.lastupdated = timestamp()  // Cartography compatibility
+                    n.lastupdated = timestamp(),  // Cartography sync timestamp
+                    n.firstseen = CASE 
+                        WHEN n.firstseen IS NULL 
+                        THEN timestamp() 
+                        ELSE n.firstseen 
+                    END
                 """
                 if metadata:
                     for key, value in metadata.items():
