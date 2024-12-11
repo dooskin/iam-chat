@@ -18,7 +18,7 @@ def verify_connection():
         
         # Get connection details
         uri = os.getenv('NEO4J_URI')
-        username = os.getenv('NEO4J_USERNAME')
+        username = os.getenv('NEO4J_USER')  # Changed to match .env file
         password = os.getenv('NEO4J_PASSWORD')
         
         # Log configuration (without exposing sensitive data)

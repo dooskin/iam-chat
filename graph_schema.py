@@ -29,8 +29,16 @@ class GraphSchema:
         try:
             # Get configuration from environment with explicit defaults from .env
             self.uri = os.getenv('NEO4J_URI')
-            self.user = os.getenv('NEO4J_USERNAME')  # Using the exact name from .env file
+            self.user = os.getenv('NEO4J_USER')  # Using the exact name from .env file
             self.password = os.getenv('NEO4J_PASSWORD')
+            
+            # Validate configuration
+            if not all([self.uri, self.user, self.password]):
+                missing = []
+                if not self.uri: missing.append('NEO4J_URI')
+                if not self.user: missing.append('NEO4J_USER')
+                if not self.password: missing.append('NEO4J_PASSWORD')
+                raise ValueError(f"Missing required Neo4j configuration: {', '.join(missing)}")
             
             # Initialize OpenAI client
             self.openai = OpenAI()
@@ -88,37 +96,81 @@ class GraphSchema:
         """Initialize the graph database schema with Cartography compatibility."""
         try:
             with self.driver.session() as session:
-                # Create constraints for User nodes
-                session.run("""
-                    CREATE CONSTRAINT user_id IF NOT EXISTS
-                    FOR (u:User) REQUIRE u.id IS UNIQUE
-                """)
+                # Create constraints for core nodes
+                constraints = [
+                    ("User", "user_id"),
+                    ("Resource", "resource_id"),
+                    ("Group", "group_id"),
+                    ("Role", "role_id"),
+                    ("Application", "application_id"),
+                    ("AWSAccount", "aws_account_id"),
+                    ("GCPProject", "gcp_project_id"),
+                    ("AzureSubscription", "azure_subscription_id"),
+                    ("Device", "device_id"),
+                    ("Network", "network_id")
+                ]
                 
-                # Create constraints for Resource nodes
-                session.run("""
-                    CREATE CONSTRAINT resource_id IF NOT EXISTS
-                    FOR (r:Resource) REQUIRE r.id IS UNIQUE
-                """)
+                # Create constraints with error handling
+                for node_type, constraint_name in constraints:
+                    try:
+                        session.run(f"""
+                            CREATE CONSTRAINT {constraint_name} IF NOT EXISTS
+                            FOR (n:{node_type}) REQUIRE n.id IS UNIQUE
+                        """)
+                        logger.info(f"Created/verified constraint: {constraint_name}")
+                    except Exception as e:
+                        logger.warning(f"Error creating constraint {constraint_name}: {str(e)}")
                 
-                # Create constraints for Group nodes (Cartography compatibility)
-                session.run("""
-                    CREATE CONSTRAINT group_id IF NOT EXISTS
-                    FOR (g:Group) REQUIRE g.id IS UNIQUE
-                """)
+                # Create vector search indices
+                core_types = ['User', 'Resource', 'Group', 'Role', 'Application']
                 
-                # Create constraints for Role nodes (Cartography compatibility)
-                session.run("""
-                    CREATE CONSTRAINT role_id IF NOT EXISTS
-                    FOR (r:Role) REQUIRE r.id IS UNIQUE
-                """)
+                # Vector embedding indices
+                for node_type in core_types:
+                    try:
+                        session.run(f"""
+                            CREATE INDEX {node_type.lower()}_vector_idx IF NOT EXISTS
+                            FOR (n:{node_type})
+                            ON (n.embedding)
+                        """)
+                        logger.info(f"Created/verified vector index for {node_type}")
+                    except Exception as e:
+                        logger.warning(f"Error creating vector index for {node_type}: {str(e)}")
                 
-                # Create constraints for Application nodes (Cartography compatibility)
-                session.run("""
-                    CREATE CONSTRAINT application_id IF NOT EXISTS
-                    FOR (a:Application) REQUIRE a.id IS UNIQUE
-                """)
+                # Cartography sync timestamp indices
+                for node_type in core_types:
+                    try:
+                        session.run(f"""
+                            CREATE INDEX {node_type.lower()}_sync_idx IF NOT EXISTS
+                            FOR (n:{node_type})
+                            ON (n.lastupdated)
+                        """)
+                        logger.info(f"Created/verified sync index for {node_type}")
+                    except Exception as e:
+                        logger.warning(f"Error creating sync index for {node_type}: {str(e)}")
+                
+                # Create relationship indices for each type separately
+                try:
+                    for rel_type in ["HAS_PERMISSION", "BELONGS_TO", "MANAGES", "OWNS", "ACCESSES"]:
+                        session.run(f"""
+                            CREATE INDEX {rel_type.lower()}_idx IF NOT EXISTS
+                            FOR ()-[r:{rel_type}]-()
+                            ON type(r)
+                        """)
+                        logger.info(f"Created/verified relationship index for {rel_type}")
+                except Exception as e:
+                    logger.warning(f"Error creating relationship indices: {str(e)}")
+                
+                # Verify schema initialization
+                result = session.run("SHOW CONSTRAINTS")
+                constraints = [record["name"] for record in result]
+                logger.info(f"Active constraints: {', '.join(constraints)}")
                 
                 logger.info("Successfully initialized Neo4j schema with Cartography compatibility")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize schema: {str(e)}")
+            raise
                 
         except Exception as e:
             logger.error(f"Failed to initialize schema: {str(e)}")
@@ -211,8 +263,16 @@ class GraphSchema:
             logger.error(f"Error creating/updating user: {str(e)}")
             raise ValueError(f"Failed to create/update user: {str(e)}") from e
 
-    def create_node_embedding(self, node_id: str, node_type: str, text_content: str) -> None:
-        """Create vector embedding for a node using OpenAI."""
+    def create_node_embedding(self, node_id: str, node_type: str, text_content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Create vector embedding for a node using OpenAI with enhanced metadata support.
+        
+        Args:
+            node_id: Unique identifier for the node
+            node_type: Type/label of the node
+            text_content: Text to generate embedding from
+            metadata: Optional metadata to store with the node
+        """
         try:
             # Generate embedding using OpenAI
             response = self.openai.embeddings.create(
@@ -221,29 +281,54 @@ class GraphSchema:
             )
             embedding = response.data[0].embedding
             
-            # Store embedding in Neo4j
+            # Prepare metadata with defaults
+            node_metadata = {
+                'last_updated': datetime.now().isoformat(),
+                'content_length': len(text_content),
+                'embedding_model': 'text-embedding-3-small'
+            }
+            if metadata:
+                node_metadata.update(metadata)
+            
+            # Store embedding with metadata in Neo4j
             with self.driver.session() as session:
                 query = """
                 MATCH (n)
                 WHERE n.id = $node_id AND $node_type in labels(n)
                 SET n.embedding = $embedding,
                     n.text_content = $text_content,
-                    n.last_embedded = timestamp()
+                    n.metadata = $metadata,
+                    n.last_embedded = timestamp(),
+                    n.lastupdated = timestamp()  // Cartography compatibility
                 """
                 session.run(
                     query,
                     node_id=node_id,
                     node_type=node_type,
                     embedding=embedding,
-                    text_content=text_content
+                    text_content=text_content,
+                    metadata=node_metadata
                 )
+                
+            logger.info(f"Successfully created embedding for node {node_id} of type {node_type}")
                 
         except Exception as e:
             logger.error(f"Error creating node embedding: {str(e)}")
             raise
 
-    def get_graph_context(self, query: str, limit: int = 5) -> Dict[str, Any]:
-        """Retrieve relevant graph context using vector similarity and relationship traversal."""
+    def get_graph_context(self, query: str, limit: int = 5, min_similarity: float = 0.7, max_hops: int = 2) -> Dict[str, Any]:
+        """
+        Retrieve relevant graph context using vector similarity and advanced relationship traversal.
+        
+        Args:
+            query: Search query text
+            limit: Maximum number of primary nodes to return
+            min_similarity: Minimum cosine similarity threshold
+            max_hops: Maximum number of relationship hops to traverse
+            
+        Returns:
+            Dict containing primary nodes, related nodes, and query metadata
+        """
         try:
             # Generate query embedding
             response = self.openai.embeddings.create(
@@ -255,59 +340,96 @@ class GraphSchema:
             # Find similar nodes and their relationships in Neo4j
             with self.driver.session() as session:
                 result = session.run("""
-                // Find initial similar nodes
+                // Find initial similar nodes using vector similarity
                 MATCH (n)
                 WHERE n.embedding IS NOT NULL
                 WITH n, gds.similarity.cosine(n.embedding, $query_embedding) AS similarity
-                WHERE similarity > 0.7
+                WHERE similarity > $min_similarity
                 
-                // Collect immediate relationships
-                OPTIONAL MATCH (n)-[r]->(m)
-                WHERE type(r) IN ['TAGGED', 'BELONGS_TO', 'HAS_ACCESS', 'MANAGES', 'OWNS']
-                WITH n, similarity, collect(DISTINCT {
-                    rel_type: type(r),
-                    target_id: m.id,
-                    target_name: m.name,
-                    target_type: m.type
-                }) as outgoing_rels
+                // Traverse relationships up to max_hops
+                CALL apoc.path.subgraphAll(n, {
+                    relationshipFilter: 'HAS_PERMISSION|BELONGS_TO|MANAGES|OWNS|ACCESSES',
+                    maxLevel: $max_hops
+                })
+                YIELD nodes, relationships
                 
-                // Collect reverse relationships
-                OPTIONAL MATCH (n)<-[r]-(m)
-                WHERE type(r) IN ['TAGGED', 'BELONGS_TO', 'HAS_ACCESS', 'MANAGES', 'OWNS']
-                WITH n, similarity, outgoing_rels, collect(DISTINCT {
-                    rel_type: type(r),
-                    source_id: m.id,
-                    source_name: m.name,
-                    source_type: m.type
-                }) as incoming_rels
+                // Process nodes
+                UNWIND nodes as related_node
+                WITH n, similarity, related_node, relationships
                 
-                // Return enriched node data
+                // Collect node metadata
+                WITH n, similarity, related_node, relationships,
+                CASE WHEN related_node = n THEN 0 ELSE 
+                    REDUCE(distance = -1, rel IN relationships |
+                        CASE WHEN rel.source = n.id OR rel.target = n.id
+                        THEN 1 ELSE distance + 1 END)
+                END as hop_distance
+                
+                // Group and return enriched data
+                WITH n, similarity,
+                collect(DISTINCT {
+                    node: related_node,
+                    hop_distance: hop_distance,
+                    labels: labels(related_node),
+                    properties: properties(related_node)
+                }) as context_nodes,
+                collect(DISTINCT {
+                    source: startNode(rel).id,
+                    target: endNode(rel).id,
+                    type: type(rel),
+                    properties: properties(rel)
+                }) as context_relationships
+                
+                // Return complete context
                 RETURN {
-                    id: n.id,
-                    labels: labels(n),
-                    name: n.name,
-                    type: n.type,
-                    content: n.text_content,
-                    metadata: n.metadata,
-                    platform: n.platform,
-                    environment: n.environment,
-                    location: n.location,
-                    owner: n.owner,
-                    similarity: similarity,
-                    relationships: {
-                        outgoing: outgoing_rels,
-                        incoming: incoming_rels
+                    primary_node: {
+                        id: n.id,
+                        labels: labels(n),
+                        name: n.name,
+                        type: n.type,
+                        content: n.text_content,
+                        metadata: n.metadata,
+                        platform: n.platform,
+                        environment: n.environment,
+                        location: n.location,
+                        owner: n.owner,
+                        similarity: similarity,
+                        last_updated: n.lastupdated  // Cartography compatibility
+                    },
+                    context: {
+                        nodes: context_nodes,
+                        relationships: context_relationships
                     }
-                } as node_data
+                } as graph_context
                 ORDER BY similarity DESC
                 LIMIT $limit
-                """, query_embedding=query_embedding, limit=limit)
+                """, 
+                query_embedding=query_embedding,
+                limit=limit,
+                min_similarity=min_similarity,
+                max_hops=max_hops
+                )
                 
-                nodes = [record["node_data"] for record in result]
+                contexts = [record["graph_context"] for record in result]
                 
+                # Process and structure the response
                 return {
-                    'nodes': nodes,
-                    'query': query
+                    'query': query,
+                    'query_time': datetime.now().isoformat(),
+                    'primary_nodes': [ctx['primary_node'] for ctx in contexts],
+                    'context_graph': {
+                        'nodes': list({node['node']['id']: node 
+                                    for ctx in contexts 
+                                    for node in ctx['context']['nodes']}.values()),
+                        'relationships': list({(rel['source'], rel['target'], rel['type']): rel 
+                                            for ctx in contexts 
+                                            for rel in ctx['context']['relationships']}.values())
+                    },
+                    'metadata': {
+                        'total_contexts': len(contexts),
+                        'max_similarity': max([ctx['primary_node']['similarity'] for ctx in contexts]) if contexts else 0,
+                        'min_similarity': min([ctx['primary_node']['similarity'] for ctx in contexts]) if contexts else 0
+                    }
                 }
                 
         except Exception as e:
