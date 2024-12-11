@@ -39,6 +39,10 @@ args = "Test Vector Store"
 task = "workflow.run"
 args = "Test Cartography Compatibility"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Test Neptune Connection"
+
 [[workflows.workflow]]
 name = "Flask Server"
 author = "agent"
@@ -137,6 +141,20 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python test_cartography_compatibility.py"
+
+[[workflows.workflow]]
+name = "Test Neptune Connection"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python test_neptune_connection.py"
 
 [deployment]
 run = ["sh", "-c", "python app.py"]
