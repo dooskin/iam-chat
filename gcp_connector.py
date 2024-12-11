@@ -1,11 +1,12 @@
 import os
+import uuid
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from google.cloud import asset_v1
-import neo4j
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import logging
+from graph_schema import GraphSchema
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,15 +24,10 @@ class GCPConnector:
     def __init__(self):
         self.client_id = os.environ.get('GOOGLE_CLIENT_ID')
         self.client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
-        self.neo4j_uri = os.environ.get('NEO4J_URI')
-        self.neo4j_user = os.environ.get('NEO4J_USER')
-        self.neo4j_password = os.environ.get('NEO4J_PASSWORD')
+        self.graph = GraphSchema()
         
-        # Initialize Neo4j driver
-        self.neo4j_driver = neo4j.GraphDatabase.driver(
-            self.neo4j_uri,
-            auth=(self.neo4j_user, self.neo4j_password)
-        )
+        # Initialize schema
+        self.graph.init_schema()
 
     def create_oauth_flow(self, redirect_uri: str) -> Flow:
         """Create OAuth2.0 flow for Google authentication."""
