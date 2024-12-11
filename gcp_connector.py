@@ -59,52 +59,170 @@ class GCPConnector:
         tx.run(query, user_id=user_id, credentials=credentials)
 
     def get_iam_data(self, credentials: Credentials) -> Dict[str, Any]:
-        """Retrieve IAM data from Google Cloud."""
+        """
+        Retrieve comprehensive IAM data from Google Cloud.
+        Includes: IAM policies, service accounts, and roles.
+        """
         try:
             service = build('cloudresourcemanager', 'v1', credentials=credentials)
+            iam_service = build('iam', 'v1', credentials=credentials)
+            project_id = os.environ.get('GOOGLE_PROJECT_ID', '')
+            project_path = f'projects/{project_id}'
             
-            # Get IAM policies
-            request = service.projects().getIamPolicy(
-                resource='projects/' + os.environ.get('GOOGLE_PROJECT_ID', ''),
-                body={}
+            # Get project IAM policies
+            policy_request = service.projects().getIamPolicy(
+                resource=project_path,
+                body={'options': {'requestedPolicyVersion': 3}}
             )
-            response = request.execute()
+            policy_response = policy_request.execute()
             
-            return response
+            # Get service accounts
+            sa_request = iam_service.projects().serviceAccounts().list(
+                name=project_path
+            )
+            sa_response = sa_request.execute()
+            
+            # Get custom roles
+            roles_request = iam_service.projects().roles().list(
+                parent=project_path
+            )
+            roles_response = roles_request.execute()
+            
+            # Structure data for Neo4j ingestion
+            iam_data = {
+                'policies': policy_response.get('bindings', []),
+                'serviceAccounts': sa_response.get('accounts', []),
+                'customRoles': roles_response.get('roles', []),
+                'metadata': {
+                    'projectId': project_id,
+                    'etag': policy_response.get('etag', ''),
+                    'version': policy_response.get('version', 1)
+                }
+            }
+            
+            # Store in Neo4j using GraphSchema
+            self._store_iam_data(iam_data)
+            
+            return iam_data
             
         except Exception as e:
             logger.error(f"Error retrieving IAM data: {str(e)}")
             return {"error": str(e)}
 
     def get_asset_inventory(self, credentials: Credentials) -> Dict[str, Any]:
-        """Retrieve Cloud Asset Inventory data."""
+        """
+        Retrieve comprehensive Cloud Asset Inventory data.
+        Includes: Compute instances, storage buckets, networks, and other GCP resources.
+        """
         try:
             client = asset_v1.AssetServiceClient(credentials=credentials)
+            project_id = os.environ.get('GOOGLE_PROJECT_ID', '')
+            parent = f"projects/{project_id}"
             
-            parent = f"projects/{os.environ.get('GOOGLE_PROJECT_ID', '')}"
+            # Define asset types to collect
+            asset_types = [
+                'compute.googleapis.com/Instance',
+                'compute.googleapis.com/Network',
+                'compute.googleapis.com/Subnetwork',
+                'compute.googleapis.com/Firewall',
+                'storage.googleapis.com/Bucket',
+                'container.googleapis.com/Cluster',
+                'cloudkms.googleapis.com/CryptoKey'
+            ]
             
-            # List assets
-            request = asset_v1.ListAssetsRequest(
-                parent=parent,
-                asset_types=['compute.googleapis.com/Instance']
-            )
-            
-            response = client.list_assets(request)
             assets = []
+            for asset_type in asset_types:
+                try:
+                    # List assets of specific type
+                    request = asset_v1.ListAssetsRequest(
+                        parent=parent,
+                        asset_types=[asset_type],
+                        content_type=asset_v1.ContentType.RESOURCE
+                    )
+                    
+                    response = client.list_assets(request)
+                    
+                    for asset in response:
+                        processed_asset = {
+                            "id": asset.name.split('/')[-1],
+                            "name": asset.name,
+                            "type": asset.asset_type,
+                            "platform": "GCP",
+                            "metadata": {
+                                "project_id": project_id,
+                                "location": asset.resource.location if hasattr(asset.resource, 'location') else None,
+                                "state": asset.resource.data.get('status', None) if hasattr(asset.resource, 'data') else None,
+                                "labels": asset.resource.data.get('labels', {}) if hasattr(asset.resource, 'data') else {},
+                                "creation_timestamp": asset.resource.data.get('creationTimestamp', None) if hasattr(asset.resource, 'data') else None,
+                                "raw_resource": asset.resource.data if hasattr(asset.resource, 'data') else {}
+                            }
+                        }
+                        assets.append(processed_asset)
+                        
+                except Exception as type_error:
+                    logger.warning(f"Error collecting assets of type {asset_type}: {str(type_error)}")
+                    continue
             
-            for asset in response:
-                assets.append({
-                    "name": asset.name,
-                    "type": asset.asset_type,
-                    "resource": asset.resource
-                })
-                
+            # Store assets in Neo4j
+            self._store_assets(assets)
+            
             return {"assets": assets}
             
         except Exception as e:
             logger.error(f"Error retrieving asset inventory: {str(e)}")
             return {"error": str(e)}
 
+    def _store_iam_data(self, iam_data: Dict[str, Any]) -> None:
+        """Store IAM data in Neo4j using GraphSchema."""
+        try:
+            project_id = iam_data['metadata']['projectId']
+            
+            # Create project node
+            self.graph.create_or_update_asset({
+                'id': f"project_{project_id}",
+                'name': project_id,
+                'type': 'GCPProject',
+                'platform': 'GCP',
+                'metadata': iam_data['metadata']
+            })
+            
+            # Process service accounts
+            for sa in iam_data['serviceAccounts']:
+                sa_data = {
+                    'id': sa['uniqueId'],
+                    'email': sa['email'],
+                    'name': sa['displayName'],
+                    'type': 'ServiceAccount',
+                    'platform': 'GCP',
+                    'metadata': {
+                        'projectId': project_id,
+                        'disabled': sa.get('disabled', False),
+                        'oauth2ClientId': sa.get('oauth2ClientId', '')
+                    }
+                }
+                self.graph.create_or_update_asset(sa_data)
+            
+            # Process IAM policies
+            for binding in iam_data['policies']:
+                role_name = binding['role'].split('/')[-1]
+                role_data = {
+                    'id': f"role_{role_name}",
+                    'name': role_name,
+                    'type': 'Role',
+                    'platform': 'GCP',
+                    'metadata': {
+                        'fullPath': binding['role'],
+                        'members': binding['members']
+                    }
+                }
+                self.graph.create_or_update_asset(role_data)
+            
+            logger.info(f"Successfully stored IAM data for project {project_id}")
+            
+        except Exception as e:
+            logger.error(f"Error storing IAM data: {str(e)}")
+            raise
+
     def close(self):
-        """Close Neo4j connection."""
-        self.neo4j_driver.close()
+        """Close the graph schema connection."""
+        self.graph.close()
