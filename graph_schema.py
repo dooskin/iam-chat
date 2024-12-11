@@ -86,23 +86,20 @@ class GraphSchema:
                 
                 # DNS resolution test
                 import socket
-                try:
-                    logger.info(f"Attempting DNS resolution for {host}...")
-                    ip_address = socket.gethostbyname(host)
-                    logger.info(f"DNS resolution successful: {host} -> {ip_address}")
-                except socket.gaierror as e:
-                    logger.error(f"DNS resolution failed for {host}: {str(e)}")
-                    raise ConfigurationError(f"Cannot resolve Neo4j host: {host}")
-                
                 # Initialize driver with Aura-specific configuration
+                # Skip DNS resolution test for Aura as it handles it internally
                 logger.info("Creating Neo4j driver with Aura configuration...")
+                # Aura-specific configuration settings optimized for cloud environment
                 driver_config = {
                     'auth': (self.user, self.password),
-                    'connection_timeout': 60,
+                    'connection_timeout': 30,  # Reduced for faster failure detection
                     'keep_alive': True,
                     'max_connection_lifetime': 3600,  # 1 hour max connection lifetime for Aura
                     'max_connection_pool_size': 50,   # Aura recommended pool size
-                    'connection_acquisition_timeout': 60
+                    'connection_acquisition_timeout': 60,
+                    'encrypted': True,
+                    'trust': 'TRUST_SYSTEM_CA_SIGNED_CERTIFICATES',
+                    'resolver': None  # Let Neo4j driver handle DNS resolution
                 }
                 
                 logger.info("Configuring Neo4j driver with Aura-specific settings...")
@@ -205,7 +202,7 @@ class GraphSchema:
             raise
             
     def init_schema(self):
-        """Initialize the graph database schema."""
+        """Initialize the graph database schema with Cartography compatibility."""
         try:
             with self.driver.session() as session:
                 # Create constraints for User nodes
@@ -220,7 +217,33 @@ class GraphSchema:
                     FOR (r:Resource) REQUIRE r.id IS UNIQUE
                 """)
                 
-                logger.info("Successfully initialized Neo4j schema")
+                # Create constraints for Group nodes (Cartography compatibility)
+                session.run("""
+                    CREATE CONSTRAINT group_id IF NOT EXISTS
+                    FOR (g:Group) REQUIRE g.id IS UNIQUE
+                """)
+                
+                # Create constraints for Role nodes (Cartography compatibility)
+                session.run("""
+                    CREATE CONSTRAINT role_id IF NOT EXISTS
+                    FOR (r:Role) REQUIRE r.id IS UNIQUE
+                """)
+                
+                # Create constraints for Application nodes (Cartography compatibility)
+                session.run("""
+                    CREATE CONSTRAINT application_id IF NOT EXISTS
+                    FOR (a:Application) REQUIRE a.id IS UNIQUE
+                """)
+                
+                # Initialize vector similarity procedure
+                session.run("""
+                    CALL gds.similarity.cosine.stream(
+                        [1.0, 1.0], 
+                        [1.0, 1.0]
+                    ) YIELD similarity
+                """)
+                
+                logger.info("Successfully initialized Neo4j schema with Cartography compatibility")
                 
         except Exception as e:
             logger.error(f"Failed to initialize schema: {str(e)}")
@@ -228,7 +251,7 @@ class GraphSchema:
             
     def validate_schema(self) -> bool:
         """
-        Validate the graph database schema.
+        Validate the graph database schema including Cartography compatibility.
         
         Returns:
             bool: True if schema is valid, False otherwise
@@ -239,13 +262,44 @@ class GraphSchema:
                 result = session.run("SHOW CONSTRAINTS")
                 constraints = [record["name"] for record in result]
                 
-                required_constraints = ["user_id", "resource_id"]
+                required_constraints = [
+                    "user_id", "resource_id", "group_id", 
+                    "role_id", "application_id"
+                ]
                 missing_constraints = [c for c in required_constraints if c not in constraints]
                 
                 if missing_constraints:
                     logger.warning(f"Missing constraints: {missing_constraints}")
                     return False
-                    
+                
+                # Validate vector similarity procedure
+                try:
+                    session.run("""
+                        CALL gds.similarity.cosine.stream(
+                            [1.0, 1.0], 
+                            [1.0, 1.0]
+                        ) YIELD similarity
+                    """)
+                    logger.info("Vector similarity procedure validated")
+                except Exception as e:
+                    logger.error(f"Vector similarity procedure not available: {str(e)}")
+                    return False
+                
+                # Validate Cartography-specific indices
+                try:
+                    session.run("""
+                        CREATE INDEX user_lastupdated IF NOT EXISTS
+                        FOR (u:User) ON (u.lastupdated)
+                    """)
+                    session.run("""
+                        CREATE INDEX resource_lastupdated IF NOT EXISTS
+                        FOR (r:Resource) ON (r.lastupdated)
+                    """)
+                    logger.info("Cartography indices validated")
+                except Exception as e:
+                    logger.warning(f"Could not create Cartography indices: {str(e)}")
+                    # Don't fail validation for index creation
+                
                 logger.info("Schema validation successful")
                 return True
                 
@@ -308,6 +362,108 @@ class GraphSchema:
         except Exception as e:
             logger.error(f"Error closing Neo4j connection: {str(e)}")
 
+def create_node_embedding(self, node_id: str, node_type: str, text_content: str) -> None:
+    """Create vector embedding for a node using OpenAI."""
+    try:
+        # Generate embedding using OpenAI
+        response = self.openai.embeddings.create(
+            model="text-embedding-3-small",
+            input=text_content
+        )
+        embedding = response.data[0].embedding
+        
+        # Store embedding in Neo4j
+        with self.driver.session() as session:
+            query = """
+            MATCH (n)
+            WHERE n.id = $node_id AND $node_type in labels(n)
+            SET n.embedding = $embedding,
+                n.text_content = $text_content,
+                n.last_embedded = timestamp()
+            """
+            session.run(
+                query,
+                node_id=node_id,
+                node_type=node_type,
+                embedding=embedding,
+                text_content=text_content
+            )
+            
+    except Exception as e:
+        logger.error(f"Error creating node embedding: {str(e)}")
+        raise
+
+def get_graph_context(self, query: str, limit: int = 5) -> Dict[str, Any]:
+    """Retrieve relevant graph context using vector similarity and relationship traversal."""
+    try:
+        # Generate query embedding
+        response = self.openai.embeddings.create(
+            model="text-embedding-3-small",
+            input=query
+        )
+        query_embedding = response.data[0].embedding
+        
+        # Find similar nodes and their relationships in Neo4j
+        with self.driver.session() as session:
+            result = session.run("""
+            // Find initial similar nodes
+            MATCH (n)
+            WHERE n.embedding IS NOT NULL
+            WITH n, gds.similarity.cosine(n.embedding, $query_embedding) AS similarity
+            WHERE similarity > 0.7
+            
+            // Collect immediate relationships
+            OPTIONAL MATCH (n)-[r]->(m)
+            WHERE type(r) IN ['TAGGED', 'BELONGS_TO', 'HAS_ACCESS', 'MANAGES', 'OWNS']
+            WITH n, similarity, collect(DISTINCT {
+                rel_type: type(r),
+                target_id: m.id,
+                target_name: m.name,
+                target_type: m.type
+            }) as outgoing_rels
+            
+            // Collect reverse relationships
+            OPTIONAL MATCH (n)<-[r]-(m)
+            WHERE type(r) IN ['TAGGED', 'BELONGS_TO', 'HAS_ACCESS', 'MANAGES', 'OWNS']
+            WITH n, similarity, outgoing_rels, collect(DISTINCT {
+                rel_type: type(r),
+                source_id: m.id,
+                source_name: m.name,
+                source_type: m.type
+            }) as incoming_rels
+            
+            // Return enriched node data
+            RETURN {
+                id: n.id,
+                labels: labels(n),
+                name: n.name,
+                type: n.type,
+                content: n.text_content,
+                metadata: n.metadata,
+                platform: n.platform,
+                environment: n.environment,
+                location: n.location,
+                owner: n.owner,
+                similarity: similarity,
+                relationships: {
+                    outgoing: outgoing_rels,
+                    incoming: incoming_rels
+                }
+            } as node_data
+            ORDER BY similarity DESC
+            LIMIT $limit
+            """, query_embedding=query_embedding, limit=limit)
+            
+            nodes = [record["node_data"] for record in result]
+            
+            return {
+                'nodes': nodes,
+                'query': query
+            }
+            
+    except Exception as e:
+        logger.error(f"Error retrieving graph context: {str(e)}")
+        raise
     def create_node_embedding(self, node_id: str, node_type: str, text_content: str) -> None:
         """Create vector embedding for a node using OpenAI."""
         try:
