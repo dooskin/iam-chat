@@ -10,6 +10,12 @@ logger = logging.getLogger(__name__)
 def test_neo4j_connection():
     """Test Neo4j connection, schema initialization, and validation."""
     try:
+        # Log environment configuration (without sensitive data)
+        logger.info("Testing Neo4j connection with following configuration:")
+        logger.info(f"NEO4J_URI configured: {bool(os.getenv('NEO4J_URI'))}")
+        logger.info(f"NEO4J_USER configured: {bool(os.getenv('NEO4J_USER'))}")
+        logger.info(f"NEO4J_PASSWORD configured: {bool(os.getenv('NEO4J_PASSWORD'))}")
+        
         # Initialize GraphSchema
         logger.info("Initializing Graph Schema...")
         graph = GraphSchema()
