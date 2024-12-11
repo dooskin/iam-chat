@@ -7,6 +7,9 @@ from openai import OpenAI
 from contextlib import contextmanager
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,25 +20,15 @@ class GraphSchema:
     def __init__(self):
         """Initialize Neo4j connection and OpenAI client."""
         try:
-            # Load environment variables
-            load_dotenv()
-            
-            # Initialize OpenAI client
-            self.openai = OpenAI()
-            
-            # Get Neo4j configuration
+            # Get configuration from environment with explicit defaults from .env
             self.uri = os.getenv('NEO4J_URI')
-            self.user = os.getenv('NEO4J_USER')
+            self.user = os.getenv('NEO4J_USER')  # Changed to match .env file
             self.password = os.getenv('NEO4J_PASSWORD')
+            self.openai_key = os.getenv('OPENAI_API_KEY')
             
-            # Validate configuration
-            if not all([self.uri, self.user, self.password]):
-                raise ValueError("Missing required Neo4j configuration. Please check .env file.")
-                
-            logger.info("Initializing Graph Schema with configuration:")
-            logger.info(f"Neo4j URI: {self.uri}")
-            logger.info(f"Neo4j username configured: {bool(self.user)}")
-            logger.info(f"Neo4j password configured: {bool(self.password)}")
+            # Debug environment variables
+            logger.info(f"Loaded NEO4J_URI value: {self.uri}")
+            logger.info(f"Loaded NEO4J_USER value: {bool(self.user)}")  # Log only presence
             
             # Validate configuration
             if not all([self.uri, self.user, self.password]):
