@@ -50,27 +50,6 @@ class GraphSchema:
             logger.info(f"Username (NEO4J_USERNAME) present: {bool(self.user)}")
             logger.info(f"Password (NEO4J_PASSWORD) present: {bool(self.password)}")
             
-            # Validate Neo4j URI format
-            if self.uri:
-                uri_parts = self.uri.split('://')
-                if len(uri_parts) == 2:
-                    protocol, host = uri_parts
-                    logger.info(f"URI Protocol: {protocol}")
-                    logger.info(f"URI Host: {host}")
-                    if not (protocol == 'neo4j+s' and '.databases.neo4j.io' in host):
-                        logger.warning("URI format may not be correct for Neo4j Aura")
-                else:
-                    logger.error("Invalid URI format")
-            
-            # Validate configuration
-            if not all([self.uri, self.user, self.password]):
-                raise ValueError("Missing required Neo4j configuration. Please check .env file.")
-                
-            logger.info("Initializing Graph Schema with configuration:")
-            logger.info(f"Neo4j URI: {self.uri}")
-            logger.info(f"Neo4j username configured: {bool(self.user)}")
-            logger.info(f"Neo4j password configured: {bool(self.password)}")
-            
             # Initialize Neo4j driver with Aura-specific configuration
             logger.info("Initializing Neo4j driver with Aura configuration...")
             self.driver = GraphDatabase.driver(
@@ -103,9 +82,6 @@ class GraphSchema:
                     ("Group", "group_id"),
                     ("Role", "role_id"),
                     ("Application", "application_id"),
-                    ("AWSAccount", "aws_account_id"),
-                    ("GCPProject", "gcp_project_id"),
-                    ("AzureSubscription", "azure_subscription_id"),
                     ("Device", "device_id"),
                     ("Network", "network_id")
                 ]
@@ -177,10 +153,6 @@ class GraphSchema:
         except Exception as e:
             logger.error(f"Failed to initialize schema: {str(e)}")
             raise
-                
-        except Exception as e:
-            logger.error(f"Failed to initialize schema: {str(e)}")
-            raise
 
     def validate_schema(self) -> bool:
         """
@@ -218,7 +190,6 @@ class GraphSchema:
                     logger.info("Cartography indices validated")
                 except Exception as e:
                     logger.warning(f"Could not create Cartography indices: {str(e)}")
-                    # Don't fail validation for index creation
                 
                 logger.info("Schema validation successful")
                 return True
@@ -226,48 +197,6 @@ class GraphSchema:
         except Exception as e:
             logger.error(f"Schema validation failed: {str(e)}")
             return False
-
-    def create_or_update_user(self, user_data: Dict[str, Any]) -> None:
-        """
-        Create or update a user node in the graph database.
-        
-        Args:
-            user_data: Dictionary containing user information
-        """
-        try:
-            required_fields = ['id', 'email']
-            if not all(field in user_data for field in required_fields):
-                raise ValueError(f"Missing required user fields: {required_fields}")
-            
-            with self.driver.session() as session:
-                query = """
-                MERGE (u:User {id: $id})
-                SET u.email = $email,
-                    u.name = $name,
-                    u.title = $title,
-                    u.department = $department,
-                    u.lastupdated = timestamp()
-                RETURN u
-                """
-                
-                result = session.run(
-                    query,
-                    id=user_data['id'],
-                    email=user_data['email'],
-                    name=user_data.get('name', ''),
-                    title=user_data.get('title', ''),
-                    department=user_data.get('department', '')
-                )
-                
-                user_node = result.single()
-                if not user_node:
-                    raise ValueError(f"Failed to create/update user with ID: {user_data['id']}")
-                    
-                logger.info(f"Successfully created/updated user: {user_data['id']}")
-                
-        except Exception as e:
-            logger.error(f"Error creating/updating user: {str(e)}")
-            raise ValueError(f"Failed to create/update user: {str(e)}") from e
 
     def create_node_embedding(self, node_id: str, node_type: str, text_content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -311,7 +240,7 @@ class GraphSchema:
                 """
                 if metadata:
                     for key, value in metadata.items():
-                        query += f",\n                    n.{key} = ${key}"
+                        query += f",\n    n.{key} = ${key}"
                 
                 params = {
                     'node_id': node_id,
@@ -335,7 +264,7 @@ class GraphSchema:
 
     def get_graph_context(self, query: str, limit: int = 5, max_hops: int = 2, page_size: int = 100, score_threshold: float = 0.6) -> Dict[str, Any]:
         """
-        Retrieve relevant graph context using simplified relationship traversal with pagination.
+        Retrieve relevant graph context using similarity search and relationship traversal.
         
         Args:
             query: Search query text
@@ -343,11 +272,17 @@ class GraphSchema:
             max_hops: Maximum number of relationship hops to traverse
             page_size: Number of results to process per page
             score_threshold: Minimum similarity score for vector search results
-            
-        Returns:
-            Dict containing primary nodes, related nodes, and query metadata
         """
         try:
+            # Initialize response metadata
+            metadata = {
+                'query_time': datetime.now().isoformat(),
+                'max_similarity': 0.0,
+                'total_contexts': 0,
+                'total_related_nodes': 0,
+                'total_relationships': 0
+            }
+            
             # Initialize vector store for similarity search
             from vector_store import VectorStore
             vector_store = VectorStore()
@@ -357,21 +292,22 @@ class GraphSchema:
                 score_threshold=score_threshold
             )
             
-            # Collect all node IDs
-            node_ids = [
-                result["node_id"]
-                for collection_results in similar_nodes.values()
-                for result in collection_results
-            ]
+            # Collect all node IDs and track max similarity
+            node_ids = []
+            for collection_results in similar_nodes.values():
+                for result in collection_results:
+                    node_ids.append(result["node_id"])
+                    if "similarity" in result:
+                        metadata['max_similarity'] = max(metadata['max_similarity'], result["similarity"])
             
             if not node_ids:
                 logger.warning("No similar nodes found in vector store")
                 return {
                     'query': query,
-                    'query_time': datetime.now().isoformat(),
+                    'query_time': metadata['query_time'],
                     'primary_nodes': [],
                     'context_graph': {'nodes': [], 'relationships': []},
-                    'metadata': {'total_contexts': 0}
+                    'metadata': metadata
                 }
             
             # Find connected nodes and relationships in Neo4j
@@ -383,33 +319,33 @@ class GraphSchema:
                 MATCH (n)
                 WHERE n.id IN $node_ids
                 
-                // Traverse relationships with pagination
+                // Use updated subquery syntax
                 CALL {
                     WITH n
-                    MATCH path = (n)-[r*1..2]-(related)
+                    MATCH p=(n)-[r*1..2]-(related)
                     WHERE ALL(rel IN r WHERE type(rel) IN ['HAS_PERMISSION', 'BELONGS_TO', 'MANAGES', 'OWNS', 'ACCESSES'])
-                    WITH n, path, related
+                    RETURN p as path, related
                     SKIP $skip
                     LIMIT $page_size
-                    RETURN path, related
                 }
                 
-                // Collect context data
-                WITH DISTINCT n,
-                     collect(DISTINCT path) as paths,
-                     collect(DISTINCT related) as related_nodes
+                // Collect and structure data
+                WITH n,
+                     collect({
+                         path: path,
+                         related: related,
+                         nodes: nodes(path),
+                         relationships: relationships(path)
+                     }) as context_paths
                 
-                // Structure response
+                // Return structured result
                 RETURN {
                     primary_node: {
                         id: n.id,
                         labels: labels(n),
                         properties: properties(n)
                     },
-                    context: {
-                        paths: paths,
-                        related_nodes: related_nodes
-                    }
+                    context: context_paths
                 } as result
                 """,
                 node_ids=node_ids,
@@ -417,59 +353,69 @@ class GraphSchema:
                 page_size=page_size
                 )
                 
+                # Process query results
                 contexts = []
-                max_similarity = 0.0
-                
-                for record in result:
-                    ctx = record["result"]
-                    # Add similarity and metadata from vector store results
-                    ctx["primary_node"]["similarity"] = 0.0  # Default similarity
-                    
-                    for collection_results in similar_nodes.values():
-                        for result in collection_results:
-                            if result["node_id"] == ctx["primary_node"]["id"]:
-                                similarity = result["similarity"]
-                                ctx["primary_node"]["similarity"] = similarity
-                                max_similarity = max(max_similarity, similarity)
-                                # Update metadata while preserving existing properties
-                                if "metadata" in result:
-                                    ctx["primary_node"].update(result["metadata"])
-                    
-                    # Add timestamp and metadata
-                    ctx["primary_node"]["retrieved_at"] = datetime.now().isoformat()
-                    contexts.append(ctx)
-                
-                # Process paths and build graph structure
                 nodes = set()
                 relationships = []
                 
-                for ctx in contexts:
-                    for path in ctx["context"]["paths"]:
-                        for node in path.nodes:
-                            nodes.add(node)
-                        for rel in path.relationships:
-                            relationships.append({
-                                "type": rel.type,
-                                "properties": dict(rel.items()),
-                                "start_node": rel.start_node["id"],
-                                "end_node": rel.end_node["id"]
-                            })
+                for record in result:
+                    ctx = record["result"]
+                    primary_node = ctx["primary_node"]
+                    
+                    # Initialize similarity score
+                    primary_node["similarity"] = 0.0
+                    
+                    # Update similarity and metadata from vector store results
+                    for collection_results in similar_nodes.values():
+                        for result in collection_results:
+                            if result["node_id"] == primary_node["id"]:
+                                primary_node["similarity"] = result.get("similarity", 0.0)
+                                if "metadata" in result:
+                                    primary_node.update(result["metadata"])
+                    
+                    # Add timestamp
+                    primary_node["retrieved_at"] = datetime.now().isoformat()
+                    contexts.append(primary_node)
+                    
+                    # Process context paths
+                    for path_data in ctx["context"]:
+                        # Add all nodes from the path
+                        for node in path_data["nodes"]:
+                            # Convert Neo4j Node to dictionary
+                            node_dict = {
+                                'id': node['id'] if 'id' in node else None,
+                                'labels': list(node.labels) if hasattr(node, 'labels') else [],
+                                'properties': dict(node)
+                            }
+                            nodes.add(frozenset(node_dict.items()))
+                        
+                        # Process relationships
+                        for rel in path_data["relationships"]:
+                            rel_data = {
+                                "type": rel.type if hasattr(rel, 'type') else str(type(rel)),
+                                "properties": dict(rel),
+                                "start_node": rel.start_node['id'] if hasattr(rel, 'start_node') else None,
+                                "end_node": rel.end_node['id'] if hasattr(rel, 'end_node') else None
+                            }
+                            relationships.append(rel_data)
                 
-                # Structure the final response
+                # Update metadata
+                metadata.update({
+                    'total_contexts': len(contexts),
+                    'total_related_nodes': len(nodes),
+                    'total_relationships': len(relationships)
+                })
+                
+                # Structure final response
                 return {
                     'query': query,
-                    'query_time': datetime.now().isoformat(),
-                    'primary_nodes': [ctx['primary_node'] for ctx in contexts],
+                    'query_time': metadata['query_time'],
+                    'primary_nodes': contexts,
                     'context_graph': {
-                        'nodes': [dict(node.items()) for node in nodes],
+                        'nodes': [dict(node) for node in nodes],
                         'relationships': relationships
                     },
-                    'metadata': {
-                        'total_contexts': len(contexts),
-                        'max_similarity': max_similarity,
-                        'total_related_nodes': len(nodes),
-                        'total_relationships': len(relationships)
-                    }
+                    'metadata': metadata
                 }
                 
         except Exception as e:
