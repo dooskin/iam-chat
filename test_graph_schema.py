@@ -4,12 +4,16 @@ from graph_schema import GraphSchema
 from datetime import datetime
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)  # Set to DEBUG level
 logger = logging.getLogger(__name__)
 
 def test_neo4j_connection():
     """Test Neo4j connection, schema initialization, and validation."""
     try:
+        # Load environment variables
+        from dotenv import load_dotenv
+        load_dotenv()
+        
         # Log environment configuration (without sensitive data)
         logger.info("=== Starting Neo4j Connection Test ===")
         logger.info("Checking environment configuration:")
@@ -20,6 +24,10 @@ def test_neo4j_connection():
             'NEO4J_USER': os.getenv('NEO4J_USER'),
             'NEO4J_PASSWORD': os.getenv('NEO4J_PASSWORD')
         }
+        
+        # Add debug logging for actual values (without password)
+        logger.debug(f"Actual NEO4J_URI value: {env_vars['NEO4J_URI']}")
+        logger.debug(f"Actual NEO4J_USER value: {env_vars['NEO4J_USER']}")
         
         for var, value in env_vars.items():
             if value:
