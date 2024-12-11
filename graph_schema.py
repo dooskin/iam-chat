@@ -22,9 +22,13 @@ class GraphSchema:
         try:
             # Get configuration from environment with explicit defaults from .env
             self.uri = os.getenv('NEO4J_URI')
-            self.user = os.getenv('NEO4J_USERNAME')
+            self.user = os.getenv('NEO4J_USER')  # Changed to match .env file
             self.password = os.getenv('NEO4J_PASSWORD')
             self.openai_key = os.getenv('OPENAI_API_KEY')
+            
+            # Debug environment variables
+            logger.info(f"Loaded NEO4J_URI value: {self.uri}")
+            logger.info(f"Loaded NEO4J_USER value: {bool(self.user)}")  # Log only presence
             
             # Validate configuration
             if not all([self.uri, self.user, self.password]):
