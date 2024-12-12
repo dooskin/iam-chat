@@ -25,73 +25,163 @@ logger = logging.getLogger(__name__)
 def verify_endpoint_format(endpoint: str) -> bool:
     """Verify if the endpoint follows Neptune naming convention and check VPC access."""
     try:
+        logger.info("\n=== Verifying Neptune Endpoint Format ===")
         # Verify endpoint format
         parts = endpoint.split('.')
         if len(parts) < 4:
+            logger.error("Invalid endpoint format: insufficient parts")
+            logger.error("Expected format: [cluster-name].[cluster-id].[region].neptune.amazonaws.com")
             return False
+            
         if not all(parts):  # Check for empty parts
+            logger.error("Invalid endpoint format: contains empty parts")
             return False
+            
         if 'neptune' not in parts or 'amazonaws' not in parts:
+            logger.error("Invalid endpoint format: missing required domains")
+            logger.error("Endpoint must contain 'neptune' and 'amazonaws' domains")
             return False
+            
+        # Extract and verify cluster information
+        cluster_name = parts[0]
+        cluster_id = parts[1]
+        endpoint_region = parts[2]
+        
+        logger.info("✓ Endpoint Format Valid:")
+        logger.info(f"• Cluster Name: {cluster_name}")
+        logger.info(f"• Cluster ID: {cluster_id}")
+        logger.info(f"• Region: {endpoint_region}")
             
         # Verify VPC endpoint access
         try:
             region = os.getenv('AWS_REGION', 'us-east-2')
+            logger.info(f"\n=== Checking VPC Endpoint Configuration in {region} ===")
+            
             ec2 = boto3.client('ec2', region_name=region)
+            service_name = f'com.amazonaws.{region}.neptune-db'
             
             # Check VPC endpoints
             response = ec2.describe_vpc_endpoints(
-                Filters=[
-                    {'Name': 'service-name', 'Values': [f'com.amazonaws.{region}.neptune-db']}
-                ]
+                Filters=[{'Name': 'service-name', 'Values': [service_name]}]
             )
             
             if not response['VpcEndpoints']:
-                logger.warning("No Neptune VPC endpoints found. This may cause connection issues.")
-                logger.warning("Please ensure VPC endpoints are properly configured.")
+                logger.warning("\n⚠️  VPC Endpoint Configuration Required:")
+                logger.warning("----------------------------------------")
+                logger.warning(f"No Neptune VPC endpoints found for service: {service_name}")
+                logger.warning("\nRequired Steps:")
+                logger.warning("1. Create an Interface VPC Endpoint:")
+                logger.warning(f"   • Service Name: {service_name}")
+                logger.warning("   • VPC: Your application VPC")
+                logger.warning("2. Configure Security Groups:")
+                logger.warning("   • Allow inbound TCP 8182")
+                logger.warning("   • Source: Your application security group")
             else:
-                logger.info("Found Neptune VPC endpoint configuration")
+                logger.info("\n✓ Found VPC Endpoint Configuration:")
                 for endpoint in response['VpcEndpoints']:
-                    logger.info(f"VPC Endpoint ID: {endpoint.get('VpcEndpointId')}")
-                    logger.info(f"VPC ID: {endpoint.get('VpcId')}")
-                    logger.info(f"State: {endpoint.get('State')}")
+                    endpoint_id = endpoint.get('VpcEndpointId', 'Unknown')
+                    vpc_id = endpoint.get('VpcId', 'Unknown')
+                    state = endpoint.get('State', 'Unknown')
+                    
+                    logger.info(f"\nEndpoint Details:")
+                    logger.info(f"• ID: {endpoint_id}")
+                    logger.info(f"• VPC: {vpc_id}")
+                    logger.info(f"• State: {state}")
+                    
+                    if state != 'available':
+                        logger.warning(f"⚠️  Warning: Endpoint {endpoint_id} state is '{state}'")
+                        logger.warning("Please check endpoint configuration in AWS Console")
             
         except Exception as vpc_error:
-            logger.warning(f"Unable to verify VPC endpoints: {str(vpc_error)}")
-            logger.warning("This may be due to insufficient IAM permissions")
+            logger.warning("\n⚠️  VPC Endpoint Verification Failed:")
+            logger.warning(f"Error: {str(vpc_error)}")
+            logger.warning("\nPossible causes:")
+            logger.warning("1. Insufficient IAM permissions")
+            logger.warning("2. Invalid AWS credentials")
+            logger.warning("3. Network connectivity issues")
             
         return True
-    except Exception:
+        
+    except Exception as e:
+        logger.error(f"\n❌ Endpoint Format Verification Failed: {str(e)}")
         return False
 
 def get_neptune_version(endpoint: str) -> str:
-    """Get Neptune engine version using boto3."""
+    """Get Neptune engine version and cluster details using boto3."""
     try:
         region = os.getenv('AWS_REGION', 'us-east-2')
-        logger.info(f"Initializing Neptune client in region: {region}")
+        logger.info(f"\n=== Querying Neptune Cluster Information ===")
+        logger.info(f"• Region: {region}")
         
+        # Configure Neptune client with retries
         neptune = boto3.client('neptune', 
                              region_name=region,
-                             config=Config(retries={'max_attempts': 3}))
+                             config=Config(
+                                 retries={'max_attempts': 3},
+                                 connect_timeout=15,
+                                 read_timeout=15
+                             ))
         
         # Extract cluster identifier from endpoint
-        cluster_id = endpoint.split('.')[0]
-        logger.info(f"Querying cluster information for: {cluster_id}")
+        try:
+            cluster_id = endpoint.split('.')[0]
+            logger.info(f"• Cluster ID: {cluster_id}")
+        except Exception:
+            logger.error("Failed to extract cluster ID from endpoint")
+            logger.error("Expected format: [cluster-name].[region].neptune.amazonaws.com")
+            return "Unknown"
         
-        response = neptune.describe_db_clusters(
-            Filters=[{'Name': 'db-cluster-id', 'Values': [cluster_id]}]
-        )
-        
-        if response['DBClusters']:
-            version = response['DBClusters'][0]['EngineVersion']
-            logger.info(f"Found Neptune cluster version: {version}")
-            return version
+        try:
+            # Get cluster information
+            response = neptune.describe_db_clusters(
+                Filters=[{'Name': 'db-cluster-id', 'Values': [cluster_id]}]
+            )
             
-        logger.warning("No Neptune clusters found matching the provided identifier")
-        return "Unknown"
-        
+            if response['DBClusters']:
+                cluster = response['DBClusters'][0]
+                version = cluster['EngineVersion']
+                status = cluster['Status']
+                endpoint = cluster.get('Endpoint', 'Not available')
+                
+                logger.info("\n✓ Neptune Cluster Details:")
+                logger.info(f"• Engine Version: {version}")
+                logger.info(f"• Status: {status}")
+                logger.info(f"• Endpoint: {endpoint}")
+                
+                # Additional cluster information
+                logger.info("\nCluster Configuration:")
+                logger.info(f"• Database Name: {cluster.get('DatabaseName', 'default')}")
+                logger.info(f"• Port: {cluster.get('Port', 8182)}")
+                logger.info(f"• Storage Encrypted: {cluster.get('StorageEncrypted', False)}")
+                
+                # VPC configuration
+                vpc_id = cluster.get('VpcSecurityGroups', [{}])[0].get('VpcId', 'Unknown')
+                logger.info(f"• VPC ID: {vpc_id}")
+                
+                return version
+            else:
+                logger.warning("\n⚠️  No matching Neptune clusters found")
+                logger.warning(f"No clusters found with ID: {cluster_id}")
+                logger.warning("Please verify:")
+                logger.warning("1. Cluster ID is correct")
+                logger.warning("2. Cluster exists in the specified region")
+                logger.warning("3. IAM permissions allow cluster access")
+                return "Unknown"
+            
+        except neptune.exceptions.DBClusterNotFoundFault:
+            logger.error(f"\n❌ Neptune cluster '{cluster_id}' not found")
+            logger.error("Please verify the cluster exists and you have access")
+            return "Unknown"
+            
     except Exception as e:
-        logger.error(f"Error retrieving Neptune version: {str(e)}")
+        logger.error(f"\n❌ Error retrieving Neptune cluster information:")
+        logger.error(f"Error: {str(e)}")
+        logger.error("\nTroubleshooting steps:")
+        logger.error("1. Verify AWS credentials are correct")
+        logger.error("2. Check IAM permissions include:")
+        logger.error("   - neptune:DescribeDBClusters")
+        logger.error("   - neptune:ListTagsForResource")
+        logger.error("3. Confirm Neptune service is available in region")
         return "Unknown"
 
 def test_neptune_connection():
