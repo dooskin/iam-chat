@@ -1,31 +1,119 @@
-version: '3'
+version: '3.8'
 
 services:
   neo4j:
-    image: neo4j:5.12.0
+    image: neo4j:5.12.0-enterprise
+    user: "${UID:-1000}:${GID:-1000}"
     ports:
       - "7474:7474"  # HTTP
       - "7687:7687"  # Bolt
     environment:
+      # Authentication
       - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password}
       - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
-      - NEO4J_server_memory_heap_initial__size=256m
-      - NEO4J_server_memory_heap_max__size=512m
-      - NEO4J_server_memory_pagecache_size=128m
-      - NEO4J_dbms_security_procedures_unrestricted=gds.*,apoc.*
-      - NEO4J_dbms_security_allow__csv__import__from__file__urls=false
+      
+      # Memory settings for Cartography compatibility
+      - NEO4J_server_memory_heap_initial__size=1G
+      - NEO4J_server_memory_heap_max__size=2G
+      - NEO4J_server_memory_pagecache_size=1G
+      
+      # Network settings
       - NEO4J_server_default__listen__address=0.0.0.0
-      - NEO4J_dbms_connector_bolt_advertised__address=localhost:7687
-      - NEO4J_initial_dbms_default__database=neo4j
+      - NEO4J_dbms_connector_bolt_advertised__address=neo4j:7687
+      - NEO4J_dbms_connector_http_advertised__address=neo4j:7474
+      
+      # Cartography required settings
+      - NEO4J_dbms_security_procedures_unrestricted=gds.*,apoc.*,algo.*
+      - NEO4J_dbms_security_procedures_allowlist=gds.*,apoc.*,algo.*
+      - NEO4J_apoc_import_file_enabled=true
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_dbms_security_allow__csv__import__from__file__urls=true
+      
+      # Performance settings for Cartography
+      - NEO4J_dbms_transaction_timeout=300s
+      - NEO4J_dbms_transaction_concurrent_maximum=100
+      - NEO4J_dbms_memory_transaction_max__size=1G
+      - NEO4J_dbms_memory_transaction_global__max__size=2G
+      
     volumes:
-      - ./data:/data
-      - ./logs:/logs
-      - ./import:/import
-      - ./plugins:/plugins
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/import
+      - neo4j_plugins:/plugins
+      - ./cartography/plugins:/plugins  # For Cartography APOC plugins
       - ./conf:/conf
+    networks:
+      - graph_network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:7474 || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"  # HTTP & GRPC
+      - "6334:6334"  # HTTP
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - graph_network
+    environment:
+      - QDRANT_ALLOW_RESET=1  # Enable collection reset for development
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - graph_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  cartography:
+    image: lyft/cartography:latest
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password}
+      - CARTOGRAPHY_CONCURRENCY=50
+      - CARTOGRAPHY_SYNC_TYPE=INCREMENTAL
+    volumes:
+      - ./cartography/config:/etc/cartography
+      - ./cartography/reports:/reports
+    networks:
+      - graph_network
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_import:
+  neo4j_plugins:
+  qdrant_data:
+  redis_data:
+
+networks:
+  graph_network:
+    driver: bridge
+    name: graph_network

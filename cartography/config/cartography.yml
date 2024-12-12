@@ -1,0 +1,95 @@
+# Cartography Configuration
+
+neo4j:
+  uri: ${NEO4J_URI}
+  auth:
+    username: ${NEO4J_USER}
+    password: ${NEO4J_PASSWORD}
+  options:
+    max_connection_lifetime: 3600
+    max_connection_pool_size: 50
+
+sync:
+  # Configure sync type (FULL or INCREMENTAL)
+  type: ${CARTOGRAPHY_SYNC_TYPE:-FULL}
+  
+  # Number of threads to use for parallel processing
+  concurrency: ${CARTOGRAPHY_CONCURRENCY:-50}
+  
+  # Update tags
+  update_tag: ${UPDATE_TAG:-UPDATE_TAG}
+  
+  # Batch size for processing
+  batch_size: 1000
+  
+  # Define which modules to run
+  modules:
+    - cartography.intel.gcp
+      enabled: true
+      options:
+        projects: ["*"]
+        compute: true
+        storage: true
+        iam: true
+        asset: true
+    - cartography.intel.aws
+      enabled: false
+    - cartography.intel.gsuite
+      enabled: true
+    - cartography.intel.github
+      enabled: false
+    - cartography.intel.okta
+      enabled: false
+
+# Vector store configuration for graph embeddings
+vector_store:
+  type: qdrant
+  host: qdrant
+  port: 6333
+  collection_name: graph_embeddings
+  dimension: 1536  # OpenAI embedding dimension
+  options:
+    distance: Cosine
+    on_disk_payload: true
+
+# Cache configuration
+cache:
+  type: redis
+  host: redis
+  port: 6379
+  db: 0
+  options:
+    max_memory: "256mb"
+    max_memory_policy: "allkeys-lru"
+
+# Analysis configuration
+analysis:
+  enabled: true
+  shortestpath:
+    enabled: true
+    max_depth: 4
+  centrality:
+    enabled: true
+  clustering:
+    enabled: true
+
+# Reporting configuration
+reporting:
+  output_directory: /reports
+  formats:
+    - json
+    - html
+  schedule:
+    enabled: true
+    interval: 24h
+
+# Logging configuration
+logging:
+  level: INFO
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  handlers:
+    file:
+      enabled: true
+      path: /logs/cartography.log
+      max_bytes: 10485760
+      backup_count: 5
