@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.neo4j
     pkgs.pkg-config
     pkgs.arrow-cpp
     pkgs.glibcLocales
