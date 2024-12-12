@@ -1,0 +1,39 @@
+2024-12-12 02:58:35.612+0000 INFO  Logging config in use: Embedded default config 'default-user-logs.xml'
+2024-12-12 02:58:35.620+0000 WARN  Use of deprecated setting 'dbms.directories.data'. It is replaced by 'server.directories.data'.
+2024-12-12 02:58:35.620+0000 WARN  Use of deprecated setting 'dbms.directories.import'. It is replaced by 'server.directories.import'.
+2024-12-12 02:58:35.621+0000 WARN  Use of deprecated setting 'dbms.directories.plugins'. It is replaced by 'server.directories.plugins'.
+2024-12-12 02:58:35.622+0000 WARN  Use of deprecated setting 'dbms.directories.logs'. It is replaced by 'server.directories.logs'.
+2024-12-12 02:58:35.622+0000 WARN  Use of deprecated setting 'dbms.directories.lib'. It is replaced by 'server.directories.lib'.
+2024-12-12 02:58:35.622+0000 WARN  Use of deprecated setting 'dbms.connector.bolt.enabled'. It is replaced by 'server.bolt.enabled'.
+2024-12-12 02:58:35.622+0000 WARN  Use of deprecated setting 'dbms.connector.bolt.listen_address'. It is replaced by 'server.bolt.listen_address'.
+2024-12-12 02:58:35.623+0000 WARN  Use of deprecated setting 'dbms.default_database'. It is replaced by 'initial.dbms.default_database'.
+2024-12-12 02:58:35.623+0000 WARN  Use of deprecated setting 'dbms.memory.pagecache.size'. It is replaced by 'server.memory.pagecache.size'.
+2024-12-12 02:58:35.623+0000 WARN  Use of deprecated setting 'dbms.memory.heap.max_size'. It is replaced by 'server.memory.heap.max_size'.
+2024-12-12 02:58:35.624+0000 WARN  Use of deprecated setting 'dbms.memory.heap.initial_size'. It is replaced by 'server.memory.heap.initial_size'.
+2024-12-12 02:58:35.627+0000 INFO  Starting...
+2024-12-12 02:58:36.519+0000 INFO  This instance is ServerId{320d7edc} (320d7edc-f1eb-4776-8872-9dc0f170a789)
+2024-12-12 02:58:37.916+0000 INFO  ======== Neo4j 5.19.0 ========
+2024-12-12 02:58:58.187+0000 INFO  Logging config in use: Embedded default config 'default-user-logs.xml'
+2024-12-12 02:58:58.193+0000 INFO  Starting...
+2024-12-12 02:58:59.257+0000 INFO  This instance is ServerId{320d7edc} (320d7edc-f1eb-4776-8872-9dc0f170a789)
+2024-12-12 02:59:38.580+0000 INFO  Logging config in use: Embedded default config 'default-user-logs.xml'
+2024-12-12 02:59:38.586+0000 INFO  Starting...
+2024-12-12 02:59:39.555+0000 INFO  This instance is ServerId{320d7edc} (320d7edc-f1eb-4776-8872-9dc0f170a789)
+2024-12-12 02:59:40.320+0000 INFO  ======== Neo4j 5.19.0 ========
+2024-12-12 03:00:03.525+0000 INFO  Logging config in use: Embedded default config 'default-user-logs.xml'
+2024-12-12 03:00:03.532+0000 WARN  Setting 'dbms.logs.debug.level' is removed. It no longer has any effect.
+2024-12-12 03:00:03.533+0000 WARN  Use of deprecated setting 'dbms.directories.data'. It is replaced by 'server.directories.data'.
+2024-12-12 03:00:03.533+0000 WARN  Use of deprecated setting 'dbms.directories.import'. It is replaced by 'server.directories.import'.
+2024-12-12 03:00:03.534+0000 WARN  Use of deprecated setting 'dbms.directories.plugins'. It is replaced by 'server.directories.plugins'.
+2024-12-12 03:00:03.534+0000 WARN  Use of deprecated setting 'dbms.directories.logs'. It is replaced by 'server.directories.logs'.
+2024-12-12 03:00:03.534+0000 WARN  Use of deprecated setting 'dbms.connector.bolt.advertised_address'. It is replaced by 'server.bolt.advertised_address'.
+2024-12-12 03:00:03.535+0000 WARN  Use of deprecated setting 'dbms.connector.bolt.listen_address'. It is replaced by 'server.bolt.listen_address'.
+2024-12-12 03:00:03.535+0000 WARN  Use of deprecated setting 'dbms.connector.bolt.enabled'. It is replaced by 'server.bolt.enabled'.
+2024-12-12 03:00:03.535+0000 WARN  Use of deprecated setting 'dbms.default_database'. It is replaced by 'initial.dbms.default_database'.
+2024-12-12 03:00:03.535+0000 WARN  Use of deprecated setting 'dbms.jvm.additional'. It is replaced by 'server.jvm.additional'.
+2024-12-12 03:00:03.536+0000 WARN  Use of deprecated setting 'dbms.memory.pagecache.size'. It is replaced by 'server.memory.pagecache.size'.
+2024-12-12 03:00:03.536+0000 WARN  Use of deprecated setting 'dbms.memory.heap.max_size'. It is replaced by 'server.memory.heap.max_size'.
+2024-12-12 03:00:03.536+0000 WARN  Use of deprecated setting 'dbms.memory.heap.initial_size'. It is replaced by 'server.memory.heap.initial_size'.
+2024-12-12 03:00:03.538+0000 INFO  Starting...
+2024-12-12 03:00:04.367+0000 INFO  This instance is ServerId{320d7edc} (320d7edc-f1eb-4776-8872-9dc0f170a789)
+2024-12-12 03:00:05.262+0000 INFO  ======== Neo4j 5.19.0 ========
