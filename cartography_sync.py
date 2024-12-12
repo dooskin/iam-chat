@@ -124,24 +124,39 @@ class CartographySync:
         """Process Cloud Asset Inventory data with Cartography schema compatibility."""
         try:
             assets = asset_data.get('assets', [])
+            current_time = int(datetime.utcnow().timestamp())
             
             for asset in assets:
+                # Determine Cartography asset type and relationship
+                asset_type = asset['type'].split('/')[-1]
+                cartography_type = self._get_cartography_type(asset_type)
+                relationship_type = self._get_relationship_type(asset_type)
+                
                 # Convert GCP asset to Cartography-compatible format
                 processed_asset = {
                     'id': asset['id'],
                     'name': asset.get('name', ''),
-                    'type': asset['type'].split('/')[-1],
+                    'type': cartography_type,
                     'platform': 'GCP',
                     'metadata': {
                         'resource_type': asset['type'],
                         'location': asset.get('metadata', {}).get('location'),
                         'state': asset.get('metadata', {}).get('state'),
                         'labels': asset.get('metadata', {}).get('labels', {}),
-                        'creation_timestamp': asset.get('metadata', {}).get('creation_timestamp')
+                        'creation_timestamp': asset.get('metadata', {}).get('creation_timestamp'),
+                        'cartography_sync_type': 'FULL',
+                        'cartography_sync_time': current_time,
+                        'last_ingested': current_time,
+                        'source': 'cloud-asset-inventory',
+                        'raw_data': asset.get('metadata', {}).get('raw_resource', {})
                     },
                     'relationships': [{
                         'target_id': f"gcp_project_{asset.get('metadata', {}).get('project_id')}",
-                        'type': 'BELONGS_TO'
+                        'type': relationship_type,
+                        'properties': {
+                            'lastupdated': current_time,
+                            'source': 'cloud-asset-inventory'
+                        }
                     }]
                 }
                 

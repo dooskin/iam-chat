@@ -176,6 +176,7 @@ class GCPConnector:
         """Store IAM data in Neo4j using GraphSchema with enhanced Cartography compatibility."""
         try:
             project_id = iam_data['metadata']['projectId']
+            current_time = int(datetime.utcnow().timestamp())
             
             # Create project node with Cartography metadata
             project_data = {
@@ -186,10 +187,14 @@ class GCPConnector:
                 'metadata': {
                     **iam_data['metadata'],
                     'resource_type': 'cloudresourcemanager.googleapis.com/Project',
-                    'asset_type': 'google.cloud.Project'
+                    'asset_type': 'google.cloud.Project',
+                    'cartography_sync_type': 'FULL',
+                    'cartography_sync_time': current_time,
+                    'last_ingested': current_time,
+                    'source': 'cloud-asset-inventory'
                 },
                 'environment': 'production',
-                'tags': ['gcp', 'project'],
+                'tags': ['gcp', 'project', 'cartography'],
                 'relationships': []
             }
             self.graph.create_or_update_asset(project_data)
