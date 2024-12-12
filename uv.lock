@@ -909,6 +909,15 @@ wheels = [
 ]
 
 [[package]]
+name = "neo4j-driver"
+version = "5.27.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b9/96/0d39074fe49db35b42ec87106e4fc026df43378eb4b3d77e7dff01f753a6/neo4j-driver-5.27.0.tar.gz", hash = "sha256:6e347e0bec2d3252aeade18a92faf7306f497e65f5381310a98b98fa8b82a113", size = 223956 }
+
+[[package]]
 name = "numpy"
 version = "2.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1406,6 +1415,7 @@ dependencies = [
     { name = "google-cloud-iam" },
     { name = "google-cloud-resource-manager" },
     { name = "neo4j" },
+    { name = "neo4j-driver" },
     { name = "numpy" },
     { name = "openai" },
     { name = "pdfminer" },
@@ -1435,6 +1445,7 @@ requires-dist = [
     { name = "google-cloud-iam" },
     { name = "google-cloud-resource-manager" },
     { name = "neo4j" },
+    { name = "neo4j-driver", specifier = ">=5.27.0" },
     { name = "numpy", specifier = ">=2.0.2" },
     { name = "openai", specifier = ">=1.55.0" },
     { name = "pdfminer", specifier = ">=20191125" },

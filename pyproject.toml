@@ -29,4 +29,5 @@ dependencies = [
     "pdfminer>=20191125",
     "numpy>=2.0.2",
     "scikit-learn>=1.6.0",
+    "neo4j-driver>=5.27.0",
 ]

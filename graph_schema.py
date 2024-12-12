@@ -14,47 +14,37 @@ class GraphSchema:
     
     def __init__(self):
         """Initialize Neo4j connection and OpenAI client."""
-        self.uri = os.environ.get('NEO4J_URI')
-        self.user = os.environ.get('NEO4J_USER')
-        self.password = os.environ.get('NEO4J_PASSWORD')
-        
         # Initialize OpenAI client
         openai_api_key = os.environ.get('OPENAI_API_KEY')
         if not openai_api_key:
             raise ValueError("Missing OpenAI API key")
         self.openai = OpenAI(api_key=openai_api_key)
         
+        # Set Neo4j connection parameters with defaults for local development
+        self.uri = os.environ.get('NEO4J_URI', 'bolt://localhost:7688')
+        self.user = os.environ.get('NEO4J_USER', 'neo4j')
+        self.password = os.environ.get('NEO4J_PASSWORD', 'accessbot')
+        
         # Log Neo4j connection parameters (without sensitive data)
         logger.info(f"Initializing Neo4j connection with URI: {self.uri}")
         logger.info(f"Neo4j user configured: {bool(self.user)}")
         logger.info(f"Neo4j password configured: {bool(self.password)}")
-        
-        # Validate Neo4j credentials
-        if not self.uri:
-            raise ValueError("Missing NEO4J_URI environment variable")
-        if not self.user:
-            raise ValueError("Missing NEO4J_USER environment variable")
-        if not self.password:
-            raise ValueError("Missing NEO4J_PASSWORD environment variable")
             
         # Initialize driver with proper error handling
         try:
             from neo4j.exceptions import ServiceUnavailable, AuthError
             
-            # Ensure URI has proper scheme and format
-            if not self.uri.startswith(('neo4j://', 'neo4j+s://', 'bolt://', 'bolt+s://')):
-                if 'databases.neo4j.io' in self.uri:
-                    self.uri = f"neo4j+s://{self.uri}"
-                else:
-                    self.uri = f"bolt://{self.uri}"
-            
-            # Ensure port is specified
-            if not any(f":{port}" in self.uri for port in ['7687', '7474']):
-                self.uri = f"{self.uri}:7687"
+            # Set default local connection if not provided
+            if not self.uri:
+                self.uri = "bolt://localhost:7688"  # Using custom port from docker-compose
+            if not self.user:
+                self.user = "neo4j"
+            if not self.password:
+                self.password = "accessbot"  # Default password from docker-compose
             
             logger.info(f"Attempting to connect to Neo4j at {self.uri}")
             
-            # Initialize Neo4j driver with robust error handling
+            # Initialize Neo4j driver with local development configuration
             logger.info("Creating Neo4j driver with configured parameters...")
             self.driver = GraphDatabase.driver(
                 self.uri,
@@ -62,9 +52,7 @@ class GraphSchema:
                 max_connection_lifetime=3600,  # 1 hour
                 max_connection_pool_size=50,
                 connection_acquisition_timeout=60,
-                connection_timeout=30,
-                encrypted=True if 'neo4j+s://' in self.uri else False,
-                trust='TRUST_SYSTEM_CA_SIGNED_CERTIFICATES'
+                connection_timeout=30
             )
             
             # Test connection with retry logic
@@ -100,29 +88,28 @@ class GraphSchema:
         """Initialize Neo4j schema with enhanced constraints and indexes for Cartography compatibility."""
         try:
             with self.driver.session() as session:
-                # Base Cartography node constraints
+                # Base Cartography node constraints using Neo4j 5.x syntax
                 constraints = [
                     # Core asset management
-                    "CREATE CONSTRAINT asset_id IF NOT EXISTS FOR (a:Asset) REQUIRE a.id IS UNIQUE",
-                    "CREATE CONSTRAINT asset_type_unique IF NOT EXISTS FOR (a:Asset) REQUIRE (a.id, a.type) IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (a:Asset) REQUIRE a.id IS UNIQUE",
                     
                     # Identity and access management
-                    "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
-                    "CREATE CONSTRAINT group_id IF NOT EXISTS FOR (g:Group) REQUIRE g.id IS UNIQUE",
-                    "CREATE CONSTRAINT role_id IF NOT EXISTS FOR (r:Role) REQUIRE r.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (g:Group) REQUIRE g.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (r:Role) REQUIRE r.id IS UNIQUE",
                     
                     # Cloud resources
-                    "CREATE CONSTRAINT gcp_project_id IF NOT EXISTS FOR (p:GCPProject) REQUIRE p.id IS UNIQUE",
-                    "CREATE CONSTRAINT service_account_id IF NOT EXISTS FOR (sa:ServiceAccount) REQUIRE sa.id IS UNIQUE",
-                    "CREATE CONSTRAINT resource_id IF NOT EXISTS FOR (r:Resource) REQUIRE r.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (p:GCPProject) REQUIRE p.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (sa:ServiceAccount) REQUIRE sa.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (r:Resource) REQUIRE r.id IS UNIQUE",
                     
                     # HR system integration
-                    "CREATE CONSTRAINT employee_id IF NOT EXISTS FOR (e:Employee) REQUIRE e.id IS UNIQUE",
-                    "CREATE CONSTRAINT department_id IF NOT EXISTS FOR (d:Department) REQUIRE d.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (e:Employee) REQUIRE e.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (d:Department) REQUIRE d.id IS UNIQUE",
                     
                     # SaaS integration
-                    "CREATE CONSTRAINT salesforce_contact_id IF NOT EXISTS FOR (c:Contact) REQUIRE c.id IS UNIQUE",
-                    "CREATE CONSTRAINT workday_employee_id IF NOT EXISTS FOR (w:WorkdayEmployee) REQUIRE w.id IS UNIQUE"
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Contact) REQUIRE c.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (w:WorkdayEmployee) REQUIRE w.id IS UNIQUE"
                 ]
                 
                 for constraint in constraints:
@@ -135,23 +122,18 @@ class GraphSchema:
                 # Enhanced indexes for RAG and Cartography integration
                 indexes = [
                     # Text-based search indexes
-                    "CREATE TEXT INDEX asset_name_idx IF NOT EXISTS FOR (a:Asset) ON (a.name)",
-                    "CREATE TEXT INDEX resource_name_idx IF NOT EXISTS FOR (r:Resource) ON (r.name)",
-                    "CREATE TEXT INDEX user_email_idx IF NOT EXISTS FOR (u:User) ON (u.email)",
+                    "CREATE FULLTEXT INDEX asset_name_search IF NOT EXISTS FOR (a:Asset) ON EACH [a.name]",
+                    "CREATE FULLTEXT INDEX resource_name_search IF NOT EXISTS FOR (r:Resource) ON EACH [r.name]",
+                    "CREATE FULLTEXT INDEX user_email_search IF NOT EXISTS FOR (u:User) ON EACH [u.email]",
                     
-                    # Asset management indexes
-                    "CREATE INDEX asset_type_idx IF NOT EXISTS FOR (a:Asset) ON (a.type)",
-                    "CREATE INDEX asset_platform_idx IF NOT EXISTS FOR (a:Asset) ON (a.platform)",
-                    "CREATE INDEX asset_environment_idx IF NOT EXISTS FOR (a:Asset) ON (a.environment)",
-                    "CREATE INDEX asset_last_sync_idx IF NOT EXISTS FOR (a:Asset) ON (a.lastupdated)",
+                    # Property indexes for common queries
+                    "CREATE INDEX asset_type_lookup IF NOT EXISTS FOR (a:Asset) ON (a.type)",
+                    "CREATE INDEX asset_platform_lookup IF NOT EXISTS FOR (a:Asset) ON (a.platform)",
+                    "CREATE INDEX asset_env_lookup IF NOT EXISTS FOR (a:Asset) ON (a.environment)",
+                    "CREATE INDEX asset_updated_lookup IF NOT EXISTS FOR (a:Asset) ON (a.lastupdated)",
                     
-                    # Vector search indexes
-                    "CREATE INDEX embedding_idx IF NOT EXISTS FOR (n) ON n.embedding",
-                    "CREATE VECTOR INDEX vector_similarity_idx IF NOT EXISTS FOR (n) ON n.embedding OPTIONS {indexProvider: 'vector', similarity: 'cosine'}",
-                    
-                    # Relationship indexes
-                    "CREATE INDEX relationship_type_idx IF NOT EXISTS FOR ()-[r]->() ON type(r)",
-                    "CREATE INDEX relationship_timestamp_idx IF NOT EXISTS FOR ()-[r]->() ON r.lastupdated"
+                    # Vector embedding index
+                    "CREATE INDEX embedding_lookup IF NOT EXISTS FOR (n:Asset) ON (n.embedding)"
                 ]
                 
                 for index in indexes:
@@ -174,12 +156,11 @@ class GraphSchema:
                 # Check constraints
                 result = session.run("""
                 SHOW CONSTRAINTS
-                YIELD name, labelsOrTypes, propertyKeys, type
+                YIELD name, labelsOrTypes, properties
                 RETURN collect({
                     name: name,
                     labels: labelsOrTypes,
-                    properties: propertyKeys,
-                    type: type
+                    properties: properties
                 }) as constraints
                 """)
                 constraints = result.single()["constraints"]
@@ -187,13 +168,12 @@ class GraphSchema:
                 # Check indexes
                 result = session.run("""
                 SHOW INDEXES
-                YIELD name, labelsOrTypes, properties, type, provider
+                YIELD name, labelsOrTypes, properties, type
                 RETURN collect({
                     name: name,
                     labels: labelsOrTypes,
                     properties: properties,
-                    type: type,
-                    provider: provider
+                    type: type
                 }) as indexes
                 """)
                 indexes = result.single()["indexes"]
@@ -228,23 +208,39 @@ class GraphSchema:
             logger.error(f"Schema validation failed: {str(e)}")
             return False
 
-    def create_node_embedding(self, node_id: str, node_type: str, text_content: str) -> None:
-        """Create vector embedding for a node using OpenAI."""
+    def create_node_embedding(self, node_id: str, node_type: str, text_content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Create vector embedding for a node using OpenAI with enhanced metadata support.
+        
+        Args:
+            node_id: Unique identifier for the node
+            node_type: Type/label of the node
+            text_content: Text to generate embedding from
+            metadata: Optional dictionary of metadata to store with the embedding
+        """
         try:
+            # Prepare enriched text content with metadata
+            enriched_content = text_content
+            if metadata:
+                metadata_text = " ".join([f"{k}: {v}" for k, v in metadata.items() if v])
+                enriched_content = f"{text_content}\nMetadata: {metadata_text}"
+            
             # Generate embedding using OpenAI
             response = self.openai.embeddings.create(
                 model="text-embedding-3-small",
-                input=text_content
+                input=enriched_content
             )
             embedding = response.data[0].embedding
             
-            # Store embedding in Neo4j
+            # Store embedding and metadata in Neo4j
             with self.driver.session() as session:
                 query = """
                 MATCH (n)
                 WHERE n.id = $node_id AND $node_type in labels(n)
                 SET n.embedding = $embedding,
                     n.text_content = $text_content,
+                    n.enriched_content = $enriched_content,
+                    n.embedding_metadata = $metadata,
                     n.last_embedded = timestamp()
                 """
                 session.run(
@@ -252,20 +248,36 @@ class GraphSchema:
                     node_id=node_id,
                     node_type=node_type,
                     embedding=embedding,
-                    text_content=text_content
+                    text_content=text_content,
+                    enriched_content=enriched_content,
+                    metadata=metadata or {}
                 )
                 
+                logger.info(f"Successfully created embedding for node {node_id} of type {node_type}")
+                
         except Exception as e:
-            logger.error(f"Error creating node embedding: {str(e)}")
+            logger.error(f"Error creating node embedding: {str(e)}", exc_info=True)
             raise
 
-    def get_graph_context(self, query: str, limit: int = 5) -> Dict[str, Any]:
-        """Retrieve relevant graph context using vector similarity and relationship traversal."""
+    def get_graph_context(self, query: str, limit: int = 5, min_similarity: float = 0.6, max_depth: int = 2) -> Dict[str, Any]:
+        """
+        Retrieve relevant graph context using vector similarity and relationship traversal.
+        
+        Args:
+            query: The search query text
+            limit: Maximum number of primary nodes to return
+            min_similarity: Minimum similarity score (0-1) for matching nodes
+            max_depth: Maximum depth for relationship traversal
+            
+        Returns:
+            Dict containing primary nodes, related nodes, and relationships
+        """
         try:
-            # Generate query embedding
+            # Generate query embedding with metadata
+            enriched_query = f"Query: {query}\nContext: Graph search for relevant nodes and relationships"
             response = self.openai.embeddings.create(
                 model="text-embedding-3-small",
-                input=query
+                input=enriched_query
             )
             query_embedding = response.data[0].embedding
             
@@ -276,59 +288,91 @@ class GraphSchema:
                 MATCH (n)
                 WHERE n.embedding IS NOT NULL
                 WITH n, gds.similarity.cosine(n.embedding, $query_embedding) AS similarity
-                WHERE similarity > 0.7
+                WHERE similarity > $min_similarity
                 
-                // Collect immediate relationships
-                OPTIONAL MATCH (n)-[r]->(m)
-                WHERE type(r) IN ['TAGGED', 'BELONGS_TO', 'HAS_ACCESS', 'MANAGES', 'OWNS']
-                WITH n, similarity, collect(DISTINCT {
-                    rel_type: type(r),
-                    target_id: m.id,
-                    target_name: m.name,
-                    target_type: m.type
-                }) as outgoing_rels
+                // Traverse relationships up to max depth
+                CALL apoc.path.subgraphNodes(n, {
+                    relationshipFilter: "TAGGED|BELONGS_TO|HAS_ACCESS|MANAGES|OWNS",
+                    maxLevel: $max_depth
+                }) YIELD node as related
                 
-                // Collect reverse relationships
-                OPTIONAL MATCH (n)<-[r]-(m)
-                WHERE type(r) IN ['TAGGED', 'BELONGS_TO', 'HAS_ACCESS', 'MANAGES', 'OWNS']
-                WITH n, similarity, outgoing_rels, collect(DISTINCT {
-                    rel_type: type(r),
-                    source_id: m.id,
-                    source_name: m.name,
-                    source_type: m.type
-                }) as incoming_rels
+                // Collect relationships between nodes
+                WITH n, similarity, related
+                OPTIONAL MATCH path = (n)-[r*1..$max_depth]-(related)
+                WHERE ALL(rel IN r WHERE type(rel) IN ['TAGGED', 'BELONGS_TO', 'HAS_ACCESS', 'MANAGES', 'OWNS'])
                 
-                // Return enriched node data
+                // Aggregate results
+                WITH n, similarity,
+                     collect(DISTINCT {
+                         node: related,
+                         paths: collect(DISTINCT path)
+                     }) as related_data
+                
+                // Return enriched data structure
                 RETURN {
-                    id: n.id,
-                    labels: labels(n),
-                    name: n.name,
-                    type: n.type,
-                    content: n.text_content,
-                    metadata: n.metadata,
-                    platform: n.platform,
-                    environment: n.environment,
-                    location: n.location,
-                    owner: n.owner,
-                    similarity: similarity,
-                    relationships: {
-                        outgoing: outgoing_rels,
-                        incoming: incoming_rels
-                    }
-                } as node_data
+                    primary_node: {
+                        id: n.id,
+                        labels: labels(n),
+                        name: n.name,
+                        type: n.type,
+                        content: n.text_content,
+                        enriched_content: n.enriched_content,
+                        metadata: n.embedding_metadata,
+                        platform: n.platform,
+                        environment: n.environment,
+                        similarity: similarity
+                    },
+                    related_nodes: [node IN related_data | {
+                        id: node.node.id,
+                        labels: labels(node.node),
+                        name: node.node.name,
+                        type: node.node.type,
+                        content: node.node.text_content,
+                        metadata: node.node.embedding_metadata
+                    }],
+                    relationships: [path IN related_data.paths | {
+                        path: [rel IN relationships(path) | {
+                            type: type(rel),
+                            properties: properties(rel),
+                            start_node: startNode(rel).id,
+                            end_node: endNode(rel).id
+                        }]
+                    }]
+                } as result
                 ORDER BY similarity DESC
                 LIMIT $limit
-                """, query_embedding=query_embedding, limit=limit)
+                """, 
+                query_embedding=query_embedding,
+                limit=limit,
+                min_similarity=min_similarity,
+                max_depth=max_depth
+                )
                 
-                nodes = [record["node_data"] for record in result]
+                results = [record["result"] for record in result]
                 
-                return {
-                    'nodes': nodes,
-                    'query': query
+                response_data = {
+                    'query': query,
+                    'primary_nodes': [r['primary_node'] for r in results],
+                    'related_nodes': [node for r in results for node in r['related_nodes']],
+                    'relationships': [rel for r in results for rel in r['relationships']],
+                    'metadata': {
+                        'total_primary_nodes': len(results),
+                        'total_related_nodes': sum(len(r['related_nodes']) for r in results),
+                        'max_similarity': max((r['primary_node']['similarity'] for r in results), default=0),
+                        'min_similarity': min((r['primary_node']['similarity'] for r in results), default=0)
+                    }
                 }
                 
+                logger.info(
+                    f"Retrieved graph context for query '{query}' with "
+                    f"{response_data['metadata']['total_primary_nodes']} primary nodes and "
+                    f"{response_data['metadata']['total_related_nodes']} related nodes"
+                )
+                
+                return response_data
+                
         except Exception as e:
-            logger.error(f"Error retrieving graph context: {str(e)}")
+            logger.error(f"Error retrieving graph context: {str(e)}", exc_info=True)
             raise
 
     def close(self):
