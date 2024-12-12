@@ -31,6 +31,10 @@ args = "Test Neptune Connection"
 task = "workflow.run"
 args = "AWS VPC Config"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Test Neptune Client"
+
 [[workflows.workflow]]
 name = "Flask Server"
 author = "agent"
@@ -101,6 +105,20 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python aws_vpc_config.py"
+
+[[workflows.workflow]]
+name = "Test Neptune Client"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python test_neptune_client.py"
 
 [deployment]
 run = ["sh", "-c", "python app.py"]

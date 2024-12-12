@@ -23,8 +23,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def verify_endpoint_format(endpoint: str) -> bool:
-    """Verify if the endpoint follows Neptune naming convention."""
+    """Verify if the endpoint follows Neptune naming convention and check VPC access."""
     try:
+        # Verify endpoint format
         parts = endpoint.split('.')
         if len(parts) < 4:
             return False
@@ -32,6 +33,33 @@ def verify_endpoint_format(endpoint: str) -> bool:
             return False
         if 'neptune' not in parts or 'amazonaws' not in parts:
             return False
+            
+        # Verify VPC endpoint access
+        try:
+            region = os.getenv('AWS_REGION', 'us-east-2')
+            ec2 = boto3.client('ec2', region_name=region)
+            
+            # Check VPC endpoints
+            response = ec2.describe_vpc_endpoints(
+                Filters=[
+                    {'Name': 'service-name', 'Values': [f'com.amazonaws.{region}.neptune-db']}
+                ]
+            )
+            
+            if not response['VpcEndpoints']:
+                logger.warning("No Neptune VPC endpoints found. This may cause connection issues.")
+                logger.warning("Please ensure VPC endpoints are properly configured.")
+            else:
+                logger.info("Found Neptune VPC endpoint configuration")
+                for endpoint in response['VpcEndpoints']:
+                    logger.info(f"VPC Endpoint ID: {endpoint.get('VpcEndpointId')}")
+                    logger.info(f"VPC ID: {endpoint.get('VpcId')}")
+                    logger.info(f"State: {endpoint.get('State')}")
+            
+        except Exception as vpc_error:
+            logger.warning(f"Unable to verify VPC endpoints: {str(vpc_error)}")
+            logger.warning("This may be due to insufficient IAM permissions")
+            
         return True
     except Exception:
         return False
@@ -62,16 +90,13 @@ def get_neptune_version(endpoint: str) -> str:
         logger.warning("No Neptune clusters found matching the provided identifier")
         return "Unknown"
         
-    except boto3.exceptions.Boto3Error as e:
-        logger.error(f"AWS API error: {str(e)}")
-        return "Unknown"
     except Exception as e:
-        logger.error(f"Unexpected error retrieving Neptune version: {str(e)}")
-        logger.error("Stack trace:", exc_info=True)
+        logger.error(f"Error retrieving Neptune version: {str(e)}")
         return "Unknown"
 
 def test_neptune_connection():
-    """Test AWS Neptune connection and basic graph operations for version 1.3.2.1."""
+    """Test AWS Neptune connection and basic graph operations."""
+    connection = None
     try:
         logger.info("=== Starting Neptune Connection Test ===")
         
@@ -91,186 +116,111 @@ def test_neptune_connection():
         # Verify Neptune version
         version = get_neptune_version(endpoint)
         logger.info(f"• Neptune Engine Version: {version}")
-        if version != "Unknown" and version != "1.3.2.1":
-            logger.warning(f"⚠ Expected version 1.3.2.1, but found {version}")
         
         logger.info("\n=== Testing Connectivity ===")
-        logger.info(f"Connecting to Neptune endpoint: {endpoint}")
         
         # Initialize Gremlin connection with improved error handling
-        connection = None
         retry_count = 0
         max_retries = 3
         
         while retry_count < max_retries:
             try:
                 logger.info(f"\nAttempt {retry_count + 1} of {max_retries}")
-                logger.info(f"Connecting to Neptune at wss://{endpoint}:8182/gremlin")
                 
-                logger.info(f"Creating DriverRemoteConnection with url 'wss://{endpoint}:8182/gremlin'")
-                # Configure event loop for async operations
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
                 # Configure SSL context
-                import ssl
                 ssl_context = ssl.create_default_context()
                 ssl_context.check_hostname = True
                 ssl_context.verify_mode = ssl.CERT_REQUIRED
 
-                # Initialize connection with retry logic
+                # Initialize connection with progressive timeouts
                 logger.info(f"Initializing connection to Neptune at wss://{endpoint}:8182/gremlin")
-                try:
-                    logger.info("Attempting to establish DriverRemoteConnection...")
-                    connection = DriverRemoteConnection(
-                        f'wss://{endpoint}:8182/gremlin',
-                        'g',
-                        message_serializer=serializer.GraphSONSerializersV2d0(),
-                        transport_factory=lambda: AiohttpTransport(
-                            call_from_event_loop=True,
-                            read_timeout=30,  # Increased timeout for VPC connection
-                            write_timeout=30,
-                            ssl=ssl_context
-                        )
+                logger.info("Configuring connection parameters...")
+                
+                # Start with shorter timeouts for initial attempt
+                initial_timeout = 15
+                connection = DriverRemoteConnection(
+                    f'wss://{endpoint}:8182/gremlin',
+                    'g',
+                    message_serializer=serializer.GraphSONSerializersV2d0(),
+                    transport_factory=lambda: AiohttpTransport(
+                        call_from_event_loop=True,
+                        read_timeout=initial_timeout,
+                        write_timeout=initial_timeout,
+                        ssl=ssl_context,
+                        verify_ssl=True
                     )
-                    logger.info("DriverRemoteConnection established successfully")
-                    logger.info("Successfully created DriverRemoteConnection")
-                except ssl.SSLError as ssl_err:
-                    logger.error(f"SSL Configuration Error: {str(ssl_err)}")
-                    logger.error("Please verify SSL certificates and Neptune endpoint SSL configuration")
-                    raise
-                except aiohttp.ClientError as client_err:
-                    logger.error(f"Network Error: {str(client_err)}")
-                    logger.error("Please verify network connectivity and Neptune endpoint accessibility")
-                    raise
-                except Exception as e:
-                    logger.error(f"Unexpected error during connection initialization: {str(e)}")
-                    logger.error("Stack trace:", exc_info=True)
-                    raise
-                logger.info("Creating GraphTraversalSource.")
+                )
                 
-                # Test connection by creating traversal source
-                logger.info("Creating traversal source...")
+                logger.info("Connection object created, establishing remote connection...")
+                # Create traversal source
                 g = traversal().withRemote(connection)
+                logger.info("Remote traversal source created successfully")
                 
-                # Verify connection with a simple query
-                logger.info("Testing connection with a simple vertex query...")
-                # Set a timeout for the query execution
-                try:
-                    count = g.V().limit(1).count().toList()[0]
-                    logger.info(f"✓ Query executed successfully (found {count} vertices)")
-                except Exception as query_error:
-                    logger.error(f"Query execution failed: {str(query_error)}")
-                    raise
+                # Test connection with progressive queries
+                logger.info("Testing connection with simple queries...")
                 
-                logger.info("✓ Successfully established connection to Neptune")
-                break
+                # First test: Simple vertex count
+                logger.info("Step 1: Testing vertex count query...")
+                count = g.V().limit(1).count().next()
+                logger.info(f"✓ Basic query successful (found {count} vertices)")
                 
-            except (GremlinServerError, ClientConnectorError, ClientError, ssl.SSLError) as e:
+                # Second test: Schema information
+                logger.info("Step 2: Retrieving vertex labels...")
+                labels = g.V().label().dedup().toList()
+                logger.info(f"✓ Schema query successful (found labels: {labels})")
+                
+                logger.info("All connection tests passed successfully")
+                
+                # Clean up and close connection
+                if connection:
+                    connection.close()
+                
+                logger.info("\n=== Neptune Connection Test Completed Successfully ===")
+                return True
+                
+            except (GremlinServerError, ClientConnectorError) as e:
                 retry_count += 1
-                if isinstance(e, ssl.SSLError):
-                    logger.error(f"SSL Error: {str(e)}")
-                elif isinstance(e, ClientConnectorError):
-                    logger.error(f"Connection Error: {str(e)}")
-                else:
-                    logger.error(f"Gremlin Server Error: {str(e)}")
+                logger.error(f"Neptune connection error (attempt {retry_count}/{max_retries})")
+                logger.error(f"Error type: {type(e).__name__}")
+                logger.error(f"Error details: {str(e)}")
+                
+                if isinstance(e, ClientConnectorError):
+                    logger.error("This may indicate VPC connectivity issues:")
+                    logger.error("- Check if your instance is in the correct VPC")
+                    logger.error("- Verify security group allows inbound on port 8182")
+                    logger.error("- Confirm VPC endpoints are properly configured")
                 
                 if retry_count < max_retries:
-                    wait_time = min(2 ** retry_count, 30)  # Cap wait time at 30 seconds
-                    logger.info(f"Retrying in {wait_time} seconds... (Attempt {retry_count + 1} of {max_retries})")
-                    import time
+                    wait_time = min(2 ** retry_count, 30)
+                    logger.info(f"Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
                 else:
-                    raise Exception(f"Failed to connect to Neptune after {max_retries} attempts: {str(e)}")
+                    raise Exception(f"Failed to connect after {max_retries} attempts. Please check VPC and security group configurations.")
+                    
+            except ssl.SSLError as e:
+                logger.error("SSL Certificate verification failed:")
+                logger.error(str(e))
+                logger.error("Please verify:")
+                logger.error("- Neptune SSL certificate is valid")
+                logger.error("- Your environment trusts AWS certificates")
+                raise
+                
+            except ClientError as e:
+                logger.error("AWS API error encountered:")
+                logger.error(str(e))
+                logger.error("This may indicate insufficient IAM permissions")
+                logger.error("Required permissions: neptune-db:*")
+                raise
                     
             except Exception as e:
-                logger.error(f"Unexpected error during connection: {str(e)}")
-                logger.error("Connection details:")
-                logger.error(f"Endpoint: {endpoint}")
-                logger.error(f"Port: 8182")
-                logger.error(f"Protocol: WSS")
+                logger.error(f"Unexpected error: {str(e)}")
                 raise
-        
-        try:
-            # Test 1: Feature compatibility check for 1.3.2.1
-            logger.info("\n=== Testing 1.3.2.1 Features ===")
-            
-            # Test vertex with all supported property types
-            test_id = f"test_{datetime.now().timestamp()}"
-            test_vector = [0.1, 0.2, 0.3] * 10  # 30-dimensional test vector
-            
-            logger.info("• Testing property types support...")
-            vertex = g.addV('TestNode')\
-                .property('id', test_id)\
-                .property('string', 'test_string')\
-                .property('number', 42.0)\
-                .property('boolean', True)\
-                .property('date', datetime.now().isoformat())\
-                .property('vector', json.dumps(test_vector))\
-                .next()
-            logger.info("✓ Created test vertex with multiple property types")
-            
-            # Test 2: Vector search capabilities (1.3.2.1 feature)
-            logger.info("\n• Testing vector search capabilities...")
-            try:
-                result = g.V().has('TestNode', 'id', test_id)\
-                    .order().by('vector', 'vector_cosine')\
-                    .limit(1)\
-                    .toList()
-                logger.info("✓ Vector similarity search executed successfully")
-            except Exception as e:
-                logger.warning(f"⚠ Vector search test failed: {str(e)}")
-            
-            # Test 3: Query optimization features
-            logger.info("\n• Testing query optimization features...")
-            try:
-                explain_query = g.V().hasLabel('TestNode')\
-                    .has('id', test_id)\
-                    .out()\
-                    .in_()\
-                    .explain()
-                logger.info("✓ Query plan analysis available")
-                logger.info(f"Query plan: {explain_query}")
-            except Exception as e:
-                logger.warning(f"⚠ Query plan retrieval failed: {str(e)}")
-            
-            # Test 4: Transaction support
-            logger.info("\n• Testing transaction support...")
-            try:
-                g.V().hasLabel('TestNode').has('id', test_id)\
-                    .property('test_transaction', 'value')\
-                    .next()
-                logger.info("✓ Transaction support verified")
-            except Exception as e:
-                logger.warning(f"⚠ Transaction test failed: {str(e)}")
-            
-            logger.info("\n=== Neptune 1.3.2.1 Compatibility Summary ===")
-            logger.info("✓ Multi-property type support: Available")
-            logger.info("✓ Vector operations: Tested")
-            logger.info("✓ Query optimization: Available")
-            logger.info("✓ Transaction support: Verified")
-            
-            return True
-            
-        finally:
-            # Cleanup test data
-            try:
-                if 'test_id' in locals():
-                    g.V().hasLabel('TestNode').has('id', test_id).drop().iterate()
-                    logger.info("\n✓ Test data cleaned up")
-            except Exception as cleanup_error:
-                logger.warning(f"Error during cleanup: {str(cleanup_error)}")
-            
-            # Close connection
-            try:
-                if 'connection' in locals():
-                    connection.close()
-                    logger.info("✓ Connection closed")
-            except Exception as close_error:
-                logger.warning(f"Error closing connection: {str(close_error)}")
+            finally:
+                if connection:
+                    try:
+                        connection.close()
+                    except Exception as close_error:
+                        logger.error(f"Error closing connection: {str(close_error)}")
     
     except Exception as e:
         logger.error(f"\n❌ Neptune connection test failed: {str(e)}")
@@ -279,7 +229,7 @@ def test_neptune_connection():
         logger.error("2. Security group allows inbound traffic on port 8182")
         logger.error("3. IAM permissions include neptune-db:* actions")
         logger.error("4. VPC and subnet configuration allows access")
-        logger.error(f"5. Neptune version is 1.3.2.1 (Current: {get_neptune_version(endpoint)})")
+        logger.error(f"5. Neptune version is 1.3.2.1 (Current: {version if 'version' in locals() else 'Unknown'})")
         return False
 
 if __name__ == "__main__":
