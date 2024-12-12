@@ -1,165 +1,234 @@
 import os
-import logging
 import json
-import boto3
-import asyncio
-import aiohttp
-import ssl
-import time
-from datetime import datetime
-from typing import Dict, List, Optional, Any, TypeVar
-from botocore.config import Config
-from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
-from gremlin_python.process.anonymous_traversal import traversal
-from gremlin_python.process.graph_traversal import __
-from gremlin_python.driver.protocol import GremlinServerError
-from gremlin_python.driver import serializer
-from gremlin_python.driver.aiohttp.transport import AiohttpTransport
-from aiohttp.client_exceptions import ClientConnectorError, ClientError
+import logging
+from typing import Dict, Any, List, Optional
+from neo4j import GraphDatabase
 from openai import OpenAI
-from gremlin_python.process.traversal import Order
-from gremlin_python.structure.graph import Graph
-from gremlin_python.structure.io import graphson
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class GraphSchema:
-    """Graph database schema manager with vector embeddings support for Neptune."""
+    """Manages Neo4j graph schema with Cartography compatibility and vector search capabilities."""
     
     def __init__(self):
-        """Initialize Neptune connection and OpenAI client."""
+        """Initialize Neo4j connection and OpenAI client."""
+        self.uri = os.environ.get('NEO4J_URI')
+        self.user = os.environ.get('NEO4J_USER')
+        self.password = os.environ.get('NEO4J_PASSWORD')
+        
+        # Initialize OpenAI client
+        openai_api_key = os.environ.get('OPENAI_API_KEY')
+        if not openai_api_key:
+            raise ValueError("Missing OpenAI API key")
+        self.openai = OpenAI(api_key=openai_api_key)
+        
+        # Log Neo4j connection parameters (without sensitive data)
+        logger.info(f"Initializing Neo4j connection with URI: {self.uri}")
+        logger.info(f"Neo4j user configured: {bool(self.user)}")
+        logger.info(f"Neo4j password configured: {bool(self.password)}")
+        
+        # Validate Neo4j credentials
+        if not self.uri:
+            raise ValueError("Missing NEO4J_URI environment variable")
+        if not self.user:
+            raise ValueError("Missing NEO4J_USER environment variable")
+        if not self.password:
+            raise ValueError("Missing NEO4J_PASSWORD environment variable")
+            
+        # Initialize driver with proper error handling
         try:
-            # Get configuration from environment
-            self.endpoint = os.getenv('NEPTUNE_ENDPOINT')
-            if not self.endpoint:
-                raise ValueError("NEPTUNE_ENDPOINT environment variable is required")
+            from neo4j.exceptions import ServiceUnavailable, AuthError
             
-            # Initialize OpenAI client
-            self.openai = OpenAI()
-            logger.info("OpenAI client initialized successfully")
-            
-            # Initialize Neptune driver with retry logic
-            self._init_neptune_connection()
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize Neptune connection: {str(e)}")
-            raise
-
-    def _init_neptune_connection(self):
-        """Initialize Neptune connection with retry logic."""
-        retry_count = 0
-        max_retries = 3
-        last_error = None
-
-        while retry_count < max_retries:
-            try:
-                # Configure SSL context
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = True
-                ssl_context.verify_mode = ssl.CERT_REQUIRED
-
-                # Initialize connection
-                self.connection = DriverRemoteConnection(
-                    f'wss://{self.endpoint}:8182/gremlin',
-                    'g',
-                    message_serializer=serializer.GraphSONSerializersV2d0(),
-                    transport_factory=lambda: AiohttpTransport(
-                        call_from_event_loop=True,
-                        read_timeout=15,
-                        write_timeout=15,
-                        ssl=ssl_context
-                    )
-                )
-                
-                # Create traversal source
-                self.g = traversal().withRemote(self.connection)
-                
-                # Test connection
-                self.g.V().limit(1).count().next()
-                logger.info("Successfully connected to Neptune")
-                return
-                
-            except Exception as e:
-                retry_count += 1
-                last_error = str(e)
-                
-                if retry_count < max_retries:
-                    wait_time = min(2 ** retry_count, 30)
-                    logger.warning(f"Connection attempt {retry_count} failed: {last_error}")
-                    logger.info(f"Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
+            # Ensure URI has proper scheme and format
+            if not self.uri.startswith(('neo4j://', 'neo4j+s://', 'bolt://', 'bolt+s://')):
+                if 'databases.neo4j.io' in self.uri:
+                    self.uri = f"neo4j+s://{self.uri}"
                 else:
-                    raise Exception(f"Failed to establish Neptune connection after {max_retries} attempts: {last_error}")
+                    self.uri = f"bolt://{self.uri}"
+            
+            # Ensure port is specified
+            if not any(f":{port}" in self.uri for port in ['7687', '7474']):
+                self.uri = f"{self.uri}:7687"
+            
+            logger.info(f"Attempting to connect to Neo4j at {self.uri}")
+            
+            # Initialize Neo4j driver with robust error handling
+            logger.info("Creating Neo4j driver with configured parameters...")
+            self.driver = GraphDatabase.driver(
+                self.uri,
+                auth=(self.user, self.password),
+                max_connection_lifetime=3600,  # 1 hour
+                max_connection_pool_size=50,
+                connection_acquisition_timeout=60,
+                connection_timeout=30,
+                encrypted=True if 'neo4j+s://' in self.uri else False,
+                trust='TRUST_SYSTEM_CA_SIGNED_CERTIFICATES'
+            )
+            
+            # Test connection with retry logic
+            retry_count = 0
+            max_retries = 3
+            while retry_count < max_retries:
+                try:
+                    logger.info(f"Attempting to verify Neo4j connectivity (attempt {retry_count + 1}/{max_retries})")
+                    self.driver.verify_connectivity()
+                    logger.info("Successfully connected to Neo4j database")
+                    break
+                except AuthError as e:
+                    logger.error(f"Authentication failed: {str(e)}")
+                    raise ValueError("Neo4j authentication failed - please check credentials") from e
+                except ServiceUnavailable as e:
+                    retry_count += 1
+                    if retry_count == max_retries:
+                        logger.error(f"Failed to connect after {max_retries} attempts")
+                        raise ValueError(f"Unable to establish Neo4j connection: {str(e)}") from e
+                    logger.warning(f"Connection attempt {retry_count} failed: {str(e)}. Retrying in {2 ** retry_count} seconds...")
+                    import time
+                    time.sleep(2 ** retry_count)  # Exponential backoff
+                except Exception as e:
+                    logger.error(f"Unexpected error during Neo4j connection: {str(e)}")
+                    raise ValueError(f"Unexpected error connecting to Neo4j: {str(e)}") from e
+                    
+        except Exception as e:
+            logger.error(f"Failed to connect to Neo4j: {str(e)}")
+            logger.error("Please verify your Neo4j URI, username, and password")
+            raise
 
     def init_schema(self):
-        """Initialize the graph database schema with Cartography compatibility."""
+        """Initialize Neo4j schema with enhanced constraints and indexes for Cartography compatibility."""
         try:
-            # Define core vertex labels
-            vertex_labels = ['User', 'Resource', 'Group', 'Role', 'Application']
-            
-            # Create property indices for better query performance
-            for label in vertex_labels:
-                try:
-                    # Create index on id property
-                    self.g.V().hasLabel(label).has('id').limit(1).next()
-                    logger.info(f"Verified index exists for {label}:id")
-                except Exception:
-                    # Neptune automatically creates indices for properties used in queries
-                    logger.info(f"Index will be auto-created for {label}:id")
+            with self.driver.session() as session:
+                # Base Cartography node constraints
+                constraints = [
+                    # Core asset management
+                    "CREATE CONSTRAINT asset_id IF NOT EXISTS FOR (a:Asset) REQUIRE a.id IS UNIQUE",
+                    "CREATE CONSTRAINT asset_type_unique IF NOT EXISTS FOR (a:Asset) REQUIRE (a.id, a.type) IS UNIQUE",
+                    
+                    # Identity and access management
+                    "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
+                    "CREATE CONSTRAINT group_id IF NOT EXISTS FOR (g:Group) REQUIRE g.id IS UNIQUE",
+                    "CREATE CONSTRAINT role_id IF NOT EXISTS FOR (r:Role) REQUIRE r.id IS UNIQUE",
+                    
+                    # Cloud resources
+                    "CREATE CONSTRAINT gcp_project_id IF NOT EXISTS FOR (p:GCPProject) REQUIRE p.id IS UNIQUE",
+                    "CREATE CONSTRAINT service_account_id IF NOT EXISTS FOR (sa:ServiceAccount) REQUIRE sa.id IS UNIQUE",
+                    "CREATE CONSTRAINT resource_id IF NOT EXISTS FOR (r:Resource) REQUIRE r.id IS UNIQUE",
+                    
+                    # HR system integration
+                    "CREATE CONSTRAINT employee_id IF NOT EXISTS FOR (e:Employee) REQUIRE e.id IS UNIQUE",
+                    "CREATE CONSTRAINT department_id IF NOT EXISTS FOR (d:Department) REQUIRE d.id IS UNIQUE",
+                    
+                    # SaaS integration
+                    "CREATE CONSTRAINT salesforce_contact_id IF NOT EXISTS FOR (c:Contact) REQUIRE c.id IS UNIQUE",
+                    "CREATE CONSTRAINT workday_employee_id IF NOT EXISTS FOR (w:WorkdayEmployee) REQUIRE w.id IS UNIQUE"
+                ]
                 
-                # Initialize a test vertex to ensure label is registered
-                test_vertex_id = f"test_{label.lower()}_{int(time.time())}"
-                self.g.addV(label)\
-                    .property('id', test_vertex_id)\
-                    .property('name', f'Test {label}')\
-                    .property('lastupdated', int(time.time() * 1000))\
-                    .property('firstseen', int(time.time() * 1000))\
-                    .next()
+                for constraint in constraints:
+                    try:
+                        session.run(constraint)
+                    except Exception as e:
+                        logger.error(f"Error creating constraint: {str(e)}")
+                        continue
                 
-                # Clean up test vertex
-                self.g.V().has('id', test_vertex_id).drop().iterate()
-                logger.info(f"Initialized schema for {label}")
-            
-            # Define relationship types
-            rel_types = ["HAS_PERMISSION", "BELONGS_TO", "MANAGES", "OWNS", "ACCESSES"]
-            
-            # Test and register edge labels
-            test_source_id = f"test_source_{int(time.time())}"
-            test_target_id = f"test_target_{int(time.time())}"
-            
-            try:
-                # Create test vertices
-                source = self.g.addV('User')\
-                    .property('id', test_source_id)\
-                    .next()
-                target = self.g.addV('Resource')\
-                    .property('id', test_target_id)\
-                    .next()
+                # Enhanced indexes for RAG and Cartography integration
+                indexes = [
+                    # Text-based search indexes
+                    "CREATE TEXT INDEX asset_name_idx IF NOT EXISTS FOR (a:Asset) ON (a.name)",
+                    "CREATE TEXT INDEX resource_name_idx IF NOT EXISTS FOR (r:Resource) ON (r.name)",
+                    "CREATE TEXT INDEX user_email_idx IF NOT EXISTS FOR (u:User) ON (u.email)",
+                    
+                    # Asset management indexes
+                    "CREATE INDEX asset_type_idx IF NOT EXISTS FOR (a:Asset) ON (a.type)",
+                    "CREATE INDEX asset_platform_idx IF NOT EXISTS FOR (a:Asset) ON (a.platform)",
+                    "CREATE INDEX asset_environment_idx IF NOT EXISTS FOR (a:Asset) ON (a.environment)",
+                    "CREATE INDEX asset_last_sync_idx IF NOT EXISTS FOR (a:Asset) ON (a.lastupdated)",
+                    
+                    # Vector search indexes
+                    "CREATE INDEX embedding_idx IF NOT EXISTS FOR (n) ON n.embedding",
+                    "CREATE VECTOR INDEX vector_similarity_idx IF NOT EXISTS FOR (n) ON n.embedding OPTIONS {indexProvider: 'vector', similarity: 'cosine'}",
+                    
+                    # Relationship indexes
+                    "CREATE INDEX relationship_type_idx IF NOT EXISTS FOR ()-[r]->() ON type(r)",
+                    "CREATE INDEX relationship_timestamp_idx IF NOT EXISTS FOR ()-[r]->() ON r.lastupdated"
+                ]
                 
-                # Create test edges for each relationship type
-                for rel_type in rel_types:
-                    self.g.V(source)\
-                        .addE(rel_type)\
-                        .to(self.g.V(target))\
-                        .property('lastupdated', int(time.time() * 1000))\
-                        .property('firstseen', int(time.time() * 1000))\
-                        .next()
-                    logger.info(f"Registered edge label: {rel_type}")
+                for index in indexes:
+                    try:
+                        session.run(index)
+                    except Exception as e:
+                        logger.error(f"Error creating index: {str(e)}")
+                        continue
                 
-            finally:
-                # Clean up test vertices
-                self.g.V().hasId(test_source_id, test_target_id).drop().iterate()
-            
-            logger.info("Successfully initialized Neptune schema")
-            return True
+            logger.info("Successfully initialized Neo4j schema")
             
         except Exception as e:
-            logger.error(f"Failed to initialize schema: {str(e)}")
+            logger.error(f"Error initializing schema: {str(e)}")
             raise
 
-    def create_node_embedding(self, node_id: str, node_type: str, text_content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    def validate_schema(self) -> bool:
+        """Validate Neo4j schema setup and verify indexes and constraints."""
+        try:
+            with self.driver.session() as session:
+                # Check constraints
+                result = session.run("""
+                SHOW CONSTRAINTS
+                YIELD name, labelsOrTypes, propertyKeys, type
+                RETURN collect({
+                    name: name,
+                    labels: labelsOrTypes,
+                    properties: propertyKeys,
+                    type: type
+                }) as constraints
+                """)
+                constraints = result.single()["constraints"]
+                
+                # Check indexes
+                result = session.run("""
+                SHOW INDEXES
+                YIELD name, labelsOrTypes, properties, type, provider
+                RETURN collect({
+                    name: name,
+                    labels: labelsOrTypes,
+                    properties: properties,
+                    type: type,
+                    provider: provider
+                }) as indexes
+                """)
+                indexes = result.single()["indexes"]
+                
+                # Validate required components
+                required_labels = {'Asset', 'User', 'Role', 'Group', 'ServiceAccount', 'GCPProject'}
+                required_indexes = {'asset_type_idx', 'embedding_idx', 'vector_similarity_idx'}
+                
+                existing_labels = set()
+                existing_indexes = set()
+                
+                for constraint in constraints:
+                    existing_labels.update(constraint['labels'])
+                
+                for index in indexes:
+                    existing_indexes.add(index['name'])
+                
+                missing_labels = required_labels - existing_labels
+                missing_indexes = required_indexes - existing_indexes
+                
+                if missing_labels or missing_indexes:
+                    if missing_labels:
+                        logger.error(f"Missing required labels: {missing_labels}")
+                    if missing_indexes:
+                        logger.error(f"Missing required indexes: {missing_indexes}")
+                    return False
+                
+                logger.info("Schema validation successful")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Schema validation failed: {str(e)}")
+            return False
+
+    def create_node_embedding(self, node_id: str, node_type: str, text_content: str) -> None:
         """Create vector embedding for a node using OpenAI."""
         try:
             # Generate embedding using OpenAI
@@ -169,141 +238,150 @@ class GraphSchema:
             )
             embedding = response.data[0].embedding
             
-            # Prepare metadata with Cartography compatibility
-            node_metadata = {
-                'last_updated': datetime.now().isoformat(),
-                'content_length': len(text_content),
-                'embedding_model': 'text-embedding-3-small',
-                'lastupdated': int(datetime.now().timestamp() * 1000),
-                'firstseen': int(datetime.now().timestamp() * 1000)
-            }
-            if metadata:
-                node_metadata.update(metadata)
-            
-            # Neptune requires array properties to be serialized
-            embedding_json = json.dumps(embedding)
-            
-            retry_count = 0
-            max_retries = 3
-            last_error = None
-            
-            while retry_count < max_retries:
-                try:
-                    # Create or update vertex with proper error handling
-                    vertex = self.g.addV(node_type)\
-                        .property('id', node_id)\
-                        .property('text_content', text_content)\
-                        .property('embedding', embedding_json)\
-                        .property('vector_dim', len(embedding))\
-                        .property('last_updated', node_metadata['last_updated'])\
-                        .property('content_length', node_metadata['content_length'])\
-                        .property('embedding_model', node_metadata['embedding_model'])\
-                        .property('lastupdated', node_metadata['lastupdated'])\
-                        .property('firstseen', node_metadata['firstseen'])
-                    
-                    # Add any additional metadata properties
-                    for key, value in node_metadata.items():
-                        if key not in ['last_updated', 'content_length', 'embedding_model', 'lastupdated', 'firstseen']:
-                            vertex = vertex.property(key, value)
-                    
-                    # Execute the traversal
-                    vertex.next()
-                    logger.info(f"Successfully created node {node_id} with embedding")
-                    break
-                    
-                except Exception as e:
-                    retry_count += 1
-                    last_error = str(e)
-                    
-                    if retry_count < max_retries:
-                        wait_time = min(2 ** retry_count, 30)
-                        logger.warning(f"Attempt {retry_count} failed: {last_error}")
-                        logger.info(f"Retrying in {wait_time} seconds...")
-                        time.sleep(wait_time)
-                    else:
-                        raise Exception(f"Failed to create node after {max_retries} attempts: {last_error}")
-            
-            logger.info(f"Successfully created embedding for node {node_id} of type {node_type}")
+            # Store embedding in Neo4j
+            with self.driver.session() as session:
+                query = """
+                MATCH (n)
+                WHERE n.id = $node_id AND $node_type in labels(n)
+                SET n.embedding = $embedding,
+                    n.text_content = $text_content,
+                    n.last_embedded = timestamp()
+                """
+                session.run(
+                    query,
+                    node_id=node_id,
+                    node_type=node_type,
+                    embedding=embedding,
+                    text_content=text_content
+                )
                 
         except Exception as e:
             logger.error(f"Error creating node embedding: {str(e)}")
             raise
 
-    def get_graph_context(self, query: str, limit: int = 5, max_hops: int = 2, score_threshold: float = 0.6) -> Dict[str, Any]:
-        """Retrieve relevant graph context using similarity search and relationship traversal."""
+    def get_graph_context(self, query: str, limit: int = 5) -> Dict[str, Any]:
+        """Retrieve relevant graph context using vector similarity and relationship traversal."""
         try:
-            start_time = time.time()
-            logger.info(f"Generating embedding for query: {query}")
-            
             # Generate query embedding
-            query_embedding = self.openai.embeddings.create(
+            response = self.openai.embeddings.create(
                 model="text-embedding-3-small",
                 input=query
-            ).data[0].embedding
+            )
+            query_embedding = response.data[0].embedding
             
-            # Convert embedding to JSON for Neptune compatibility
-            query_embedding_json = json.dumps(query_embedding)
-            
-            logger.info("Executing vector similarity search...")
-            
-            # Find similar nodes using Neptune's vector similarity capabilities
-            similar_nodes = self.g.V()\
-                .has('embedding')\
-                .order()\
-                .by(__.coalesce(
-                    __.values('embedding').math('neptune#similarity(vector_cosine, ' + query_embedding_json + ')'),
-                    __.constant(-1)
-                ), Order.desc)\
-                .limit(limit)\
-                .project('id', 'label', 'properties', 'similarity')\
-                .by(__.id())\
-                .by(__.label())\
-                .by(__.valueMap())\
-                .by(__.values('embedding').math('neptune#similarity(vector_cosine, ' + query_embedding_json + ')'))\
-                .toList()
-            
-            logger.info(f"Found {len(similar_nodes)} similar nodes in {time.time() - start_time:.2f} seconds")
-            
-            # Filter by similarity threshold
-            similar_nodes = [n for n in similar_nodes if n['similarity'] >= score_threshold]
-            
-            # Get connected nodes within max_hops
-            context = []
-            for node in similar_nodes:
-                connected = self.g.V(node['id'])\
-                    .repeat(__.bothE().otherV())\
-                    .times(max_hops)\
-                    .dedup()\
-                    .project('id', 'label', 'properties')\
-                    .by(__.id())\
-                    .by(__.label())\
-                    .by(__.valueMap())\
-                    .toList()
+            # Find similar nodes and their relationships in Neo4j
+            with self.driver.session() as session:
+                result = session.run("""
+                // Find initial similar nodes
+                MATCH (n)
+                WHERE n.embedding IS NOT NULL
+                WITH n, gds.similarity.cosine(n.embedding, $query_embedding) AS similarity
+                WHERE similarity > 0.7
                 
-                context.append({
-                    'primary_node': node,
-                    'connected_nodes': connected
-                })
-            
-            return {
-                'query': query,
-                'query_time': datetime.now().isoformat(),
-                'contexts': context,
-                'metadata': {
-                    'total_nodes': len(similar_nodes),
-                    'total_connected': sum(len(c['connected_nodes']) for c in context),
-                    'max_similarity': max([n['similarity'] for n in similar_nodes]) if similar_nodes else 0
+                // Collect immediate relationships
+                OPTIONAL MATCH (n)-[r]->(m)
+                WHERE type(r) IN ['TAGGED', 'BELONGS_TO', 'HAS_ACCESS', 'MANAGES', 'OWNS']
+                WITH n, similarity, collect(DISTINCT {
+                    rel_type: type(r),
+                    target_id: m.id,
+                    target_name: m.name,
+                    target_type: m.type
+                }) as outgoing_rels
+                
+                // Collect reverse relationships
+                OPTIONAL MATCH (n)<-[r]-(m)
+                WHERE type(r) IN ['TAGGED', 'BELONGS_TO', 'HAS_ACCESS', 'MANAGES', 'OWNS']
+                WITH n, similarity, outgoing_rels, collect(DISTINCT {
+                    rel_type: type(r),
+                    source_id: m.id,
+                    source_name: m.name,
+                    source_type: m.type
+                }) as incoming_rels
+                
+                // Return enriched node data
+                RETURN {
+                    id: n.id,
+                    labels: labels(n),
+                    name: n.name,
+                    type: n.type,
+                    content: n.text_content,
+                    metadata: n.metadata,
+                    platform: n.platform,
+                    environment: n.environment,
+                    location: n.location,
+                    owner: n.owner,
+                    similarity: similarity,
+                    relationships: {
+                        outgoing: outgoing_rels,
+                        incoming: incoming_rels
+                    }
+                } as node_data
+                ORDER BY similarity DESC
+                LIMIT $limit
+                """, query_embedding=query_embedding, limit=limit)
+                
+                nodes = [record["node_data"] for record in result]
+                
+                return {
+                    'nodes': nodes,
+                    'query': query
                 }
-            }
-            
+                
         except Exception as e:
             logger.error(f"Error retrieving graph context: {str(e)}")
             raise
 
     def close(self):
-        """Close the Neptune connection."""
+        """Close the Neo4j driver connection."""
         try:
-            if hasattr(self, 'connection'):
-                self.connection.close()
+            self.driver.close()
         except Exception as e:
-            logger.error(f"Error closing Neptune connection: {str(e)}")
+            logger.error(f"Error closing Neo4j connection: {str(e)}")
+
+    def create_or_update_user(self, user_data: Dict[str, Any]) -> None:
+        """
+        Create or update a user node in the graph database.
+        
+        Args:
+            user_data: Dictionary containing user information
+            
+        Raises:
+            ValueError: If required user data is missing
+        """
+        try:
+            required_fields = ['id', 'email']
+            if not all(field in user_data for field in required_fields):
+                raise ValueError(f"Missing required user fields: {required_fields}")
+            
+            with self.driver.session() as session:
+                # Create or update user node with Cartography-compatible properties
+                query = """
+                MERGE (u:User {id: $id})
+                SET u.email = $email,
+                    u.name = $name,
+                    u.title = $title,
+                    u.department = $department,
+                    u.lastupdated = timestamp(),
+                    u.platform = 'internal',
+                    u.type = 'employee'
+                RETURN u
+                """
+                
+                result = session.run(
+                    query,
+                    id=user_data['id'],
+                    email=user_data['email'],
+                    name=user_data.get('name', ''),
+                    title=user_data.get('title', ''),
+                    department=user_data.get('department', '')
+                )
+                
+                user_node = result.single()
+                if not user_node:
+                    raise ValueError(f"Failed to create/update user with ID: {user_data['id']}")
+                    
+                logger.info(f"Successfully created/updated user: {user_data['id']}")
+                
+        except Exception as e:
+            logger.error(f"Error creating/updating user: {str(e)}")
+            raise ValueError(f"Failed to create/update user: {str(e)}") from e

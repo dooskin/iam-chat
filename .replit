@@ -17,27 +17,7 @@ args = "Flask Server"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Test Graph RAG"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Test Vector Store"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Test Neptune Connection"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "AWS VPC Config"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Test Neptune Client"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Test Graph Local"
+args = "Test Neo4j Integration"
 
 [[workflows.workflow]]
 name = "Flask Server"
@@ -55,7 +35,7 @@ args = "python app.py"
 waitForPort = 5000
 
 [[workflows.workflow]]
-name = "Test Graph RAG"
+name = "Test Neo4j Integration"
 author = "agent"
 
 [workflows.workflow.metadata]
@@ -66,77 +46,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python test_graph_rag.py"
-
-[[workflows.workflow]]
-name = "Test Vector Store"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python test_vector_store.py"
-
-[[workflows.workflow]]
-name = "Test Neptune Connection"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python test_neptune_connection.py"
-
-[[workflows.workflow]]
-name = "AWS VPC Config"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python aws_vpc_config.py"
-
-[[workflows.workflow]]
-name = "Test Neptune Client"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python test_neptune_client.py"
-
-[[workflows.workflow]]
-name = "Test Graph Local"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python test_graph_local.py"
+args = "python test_graph_schema.py"
 
 [deployment]
 run = ["sh", "-c", "python app.py"]
