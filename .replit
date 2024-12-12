@@ -54,7 +54,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python test_graph_schema.py"
+args = "python test_cartography_sync.py"
 
 [[workflows.workflow]]
 name = "Test Cartography Integration"
@@ -82,7 +82,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "mkdir -p data logs plugins import run && NEO4J_HOME=$PWD NEO4J_CONF=$PWD NEO4J_AUTH=$NEO4J_USER/$NEO4J_PASSWORD NEO4J_ACCEPT_LICENSE_AGREEMENT=yes neo4j console"
+args = "mkdir -p data logs plugins import run && NEO4J_HOME=$PWD NEO4J_CONF=$PWD NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password} NEO4J_EDITION=community neo4j console"
 waitForPort = 7687
 
 [deployment]

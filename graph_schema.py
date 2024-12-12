@@ -21,15 +21,11 @@ class GraphSchema:
         self.openai = OpenAI(api_key=openai_api_key)
         
         # Set connection parameters from environment variables
-        self.uri = os.environ.get('NEO4J_URI')
-        self.user = os.environ.get('NEO4J_USER')
-        self.password = os.environ.get('NEO4J_PASSWORD')
+        self.uri = os.environ.get('NEO4J_URI', 'bolt://localhost:7687').replace('7688', '7687')  # Ensure correct port
+        self.user = os.environ.get('NEO4J_USER', 'neo4j')
+        self.password = os.environ.get('NEO4J_PASSWORD', 'password')
         
-        if not all([self.uri, self.user, self.password]):
-            raise ValueError("Missing required Neo4j environment variables. Please ensure NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD are set.")
-        
-        # Log connection attempt (without credentials)
-        logger.info(f"Attempting to connect to Neo4j at {self.uri}")
+        logger.info(f"Connecting to Neo4j at {self.uri} with user {self.user}")
         
         try:
             # Configure connection settings based on URI scheme
