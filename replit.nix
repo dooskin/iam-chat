@@ -1,5 +1,8 @@
 {pkgs}: {
   deps = [
+    pkgs.zlib
+    pkgs.c-ares
+    pkgs.grpc
     pkgs.neo4j
     pkgs.pkg-config
     pkgs.arrow-cpp

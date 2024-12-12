@@ -238,3 +238,7 @@
 2024-12-12 03:25:02.985+0000 WARN  Use of deprecated setting 'dbms.default_database'. It is replaced by 'initial.dbms.default_database'.
 2024-12-12 03:25:02.988+0000 INFO  Starting...
 2024-12-12 03:25:04.133+0000 INFO  This instance is ServerId{320d7edc} (320d7edc-f1eb-4776-8872-9dc0f170a789)
+2024-12-12 20:58:30.168+0000 INFO  Logging config in use: Embedded default config 'default-user-logs.xml'
+2024-12-12 20:58:30.177+0000 WARN  Use of deprecated setting 'dbms.default_database'. It is replaced by 'initial.dbms.default_database'.
+2024-12-12 20:58:30.182+0000 INFO  Starting...
+2024-12-12 20:58:31.332+0000 INFO  This instance is ServerId{320d7edc} (320d7edc-f1eb-4776-8872-9dc0f170a789)

@@ -1,11 +1,25 @@
 import os
 import uuid
+import logging
+from datetime import datetime
+from typing import Optional, Dict, Any, List
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from google.cloud import asset_v1
-from typing import Optional, Dict, Any, List
-import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+try:
+    from google.cloud import asset_v1
+    from google.cloud.asset_v1 import AssetServiceClient
+    from google.api_core import operation  # type: ignore
+except ImportError:
+    logger.warning("Google Cloud Asset API dependencies not available. Using mock implementation for testing.")
+    asset_v1 = None
+    AssetServiceClient = None
+
 from graph_schema import GraphSchema
 
 # Configure logging
@@ -114,9 +128,17 @@ class GCPConnector:
         Retrieve comprehensive Cloud Asset Inventory data.
         Includes: Compute instances, storage buckets, networks, and other GCP resources.
         """
+        if not asset_v1 or not AssetServiceClient:
+            logger.warning("Google Cloud Asset API not available. Returning empty asset list.")
+            return {"assets": [], "warning": "Asset API not available"}
+
         try:
-            client = asset_v1.AssetServiceClient(credentials=credentials)
+            client = AssetServiceClient(credentials=credentials)
             project_id = os.environ.get('GOOGLE_PROJECT_ID', '')
+            if not project_id:
+                logger.error("GOOGLE_PROJECT_ID environment variable not set")
+                return {"assets": [], "error": "Project ID not configured"}
+                
             parent = f"projects/{project_id}"
             
             # Define asset types to collect

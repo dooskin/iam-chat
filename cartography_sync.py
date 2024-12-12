@@ -175,6 +175,37 @@ class CartographySync:
             logger.error(f"Error processing asset data: {str(e)}")
             raise
             
+    def _get_cartography_type(self, asset_type: str) -> str:
+        """Map GCP asset types to Cartography-compatible node types."""
+        type_mapping = {
+            'Instance': 'GCPInstance',
+            'Network': 'GCPNetwork',
+            'Subnetwork': 'GCPSubnetwork',
+            'Firewall': 'GCPFirewall',
+            'Bucket': 'GCPBucket',
+            'Cluster': 'GKECluster',
+            'CryptoKey': 'GCPKMSCryptoKey',
+            'ServiceAccount': 'GCPServiceAccount',
+            'Role': 'GCPIAMRole',
+            'Project': 'GCPProject'
+        }
+        return type_mapping.get(asset_type, 'GCPResource')
+        
+    def _get_relationship_type(self, asset_type: str) -> str:
+        """Determine the appropriate relationship type for GCP assets."""
+        relationship_mapping = {
+            'Instance': 'CONTAINS_INSTANCE',
+            'Network': 'CONTAINS_NETWORK',
+            'Subnetwork': 'CONTAINS_SUBNETWORK',
+            'Firewall': 'CONTAINS_FIREWALL',
+            'Bucket': 'CONTAINS_BUCKET',
+            'Cluster': 'CONTAINS_CLUSTER',
+            'CryptoKey': 'CONTAINS_CRYPTOKEY',
+            'ServiceAccount': 'HAS_SERVICEACCOUNT',
+            'Role': 'HAS_ROLE'
+        }
+        return relationship_mapping.get(asset_type, 'CONTAINS')
+
     def close(self):
         """Clean up connections."""
         try:
