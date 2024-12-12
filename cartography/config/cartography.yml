@@ -1,45 +1,62 @@
-# Cartography Configuration
+# Cartography Configuration for Graph RAG System
 
 neo4j:
-  uri: ${NEO4J_URI}
+  uri: ${NEO4J_URI:-bolt://neo4j:7687}
   auth:
-    username: ${NEO4J_USER}
-    password: ${NEO4J_PASSWORD}
+    username: ${NEO4J_USER:-neo4j}
+    password: ${NEO4J_PASSWORD:-password}
   options:
     max_connection_lifetime: 3600
     max_connection_pool_size: 50
+    connection_timeout: 30
+    connection_acquisition_timeout: 60
+    trust: TRUST_ALL_CERTIFICATES
 
 sync:
-  # Configure sync type (FULL or INCREMENTAL)
-  type: ${CARTOGRAPHY_SYNC_TYPE:-FULL}
-  
-  # Number of threads to use for parallel processing
+  # Sync configuration
+  type: ${CARTOGRAPHY_SYNC_TYPE:-INCREMENTAL}
   concurrency: ${CARTOGRAPHY_CONCURRENCY:-50}
-  
-  # Update tags
   update_tag: ${UPDATE_TAG:-UPDATE_TAG}
-  
-  # Batch size for processing
   batch_size: 1000
   
-  # Define which modules to run
+  # Module configuration
   modules:
-    - cartography.intel.gcp
-      enabled: true
-      options:
-        projects: ["*"]
-        compute: true
-        storage: true
-        iam: true
-        asset: true
-    - cartography.intel.aws
-      enabled: false
-    - cartography.intel.gsuite
-      enabled: true
-    - cartography.intel.github
-      enabled: false
-    - cartography.intel.okta
-      enabled: false
+    - cartography.intel.gcp:
+        enabled: true
+        options:
+          projects: ["*"]
+          compute:
+            enabled: true
+            instance_tags: true
+            network_tags: true
+          storage:
+            enabled: true
+            analyze_object_acls: true
+          iam:
+            enabled: true
+            service_accounts: true
+            custom_roles: true
+          asset:
+            enabled: true
+            asset_types:
+              - compute.googleapis.com/Instance
+              - compute.googleapis.com/Network
+              - storage.googleapis.com/Bucket
+              - iam.googleapis.com/ServiceAccount
+              - cloudkms.googleapis.com/CryptoKey
+    
+    - cartography.intel.gsuite:
+        enabled: true
+        options:
+          groups: true
+          users: true
+          
+    - cartography.intel.aws:
+        enabled: false
+    - cartography.intel.github:
+        enabled: false
+    - cartography.intel.okta:
+        enabled: false
 
 # Vector store configuration for graph embeddings
 vector_store:
@@ -51,6 +68,10 @@ vector_store:
   options:
     distance: Cosine
     on_disk_payload: true
+    optimize_storage: true
+    vectors_on_disk: true
+    replication_factor: 1
+    write_consistency_factor: 1
 
 # Cache configuration
 cache:
@@ -61,6 +82,10 @@ cache:
   options:
     max_memory: "256mb"
     max_memory_policy: "allkeys-lru"
+    key_prefix: "cartography:"
+    timeout: 300
+    retry_on_timeout: true
+    socket_keepalive: true
 
 # Analysis configuration
 analysis:
@@ -68,10 +93,24 @@ analysis:
   shortestpath:
     enabled: true
     max_depth: 4
+    algorithms:
+      - dijkstra
+      - astar
   centrality:
     enabled: true
+    algorithms:
+      - betweenness
+      - pagerank
   clustering:
     enabled: true
+    algorithms:
+      - louvain
+      - label_propagation
+  similarity:
+    enabled: true
+    metrics:
+      - cosine
+      - jaccard
 
 # Reporting configuration
 reporting:
@@ -79,9 +118,17 @@ reporting:
   formats:
     - json
     - html
+    - csv
   schedule:
     enabled: true
     interval: 24h
+  alerts:
+    enabled: true
+    channels:
+      - type: webhook
+        url: ${ALERT_WEBHOOK_URL:-}
+      - type: email
+        recipients: ${ALERT_EMAIL_RECIPIENTS:-}
 
 # Logging configuration
 logging:
@@ -93,3 +140,6 @@ logging:
       path: /logs/cartography.log
       max_bytes: 10485760
       backup_count: 5
+    console:
+      enabled: true
+      format: '%(levelname)s: %(message)s'
