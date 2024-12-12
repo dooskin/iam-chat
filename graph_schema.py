@@ -20,15 +20,14 @@ class GraphSchema:
             raise ValueError("Missing OpenAI API key")
         self.openai = OpenAI(api_key=openai_api_key)
         
-        # Set Neo4j connection parameters with defaults for local development
-        self.uri = os.environ.get('NEO4J_URI', 'bolt://localhost:7688')
+        # Set default local connection if not provided
+        self.uri = os.environ.get('NEO4J_URI', 'bolt://localhost:7688')  # Using custom port from docker-compose
         self.user = os.environ.get('NEO4J_USER', 'neo4j')
-        self.password = os.environ.get('NEO4J_PASSWORD', 'accessbot')
+        self.password = os.environ.get('NEO4J_PASSWORD', 'accessbot')  # Default password from docker-compose
         
         # Log Neo4j connection parameters (without sensitive data)
         logger.info(f"Initializing Neo4j connection with URI: {self.uri}")
-        logger.info(f"Neo4j user configured: {bool(self.user)}")
-        logger.info(f"Neo4j password configured: {bool(self.password)}")
+        logger.info("Neo4j credentials configured successfully")
             
         # Initialize driver with proper error handling
         try:
@@ -119,21 +118,24 @@ class GraphSchema:
                         logger.error(f"Error creating constraint: {str(e)}")
                         continue
                 
-                # Enhanced indexes for RAG and Cartography integration
+                # Basic indexes for Cartography compatibility
                 indexes = [
-                    # Text-based search indexes
-                    "CREATE FULLTEXT INDEX asset_name_search IF NOT EXISTS FOR (a:Asset) ON EACH [a.name]",
-                    "CREATE FULLTEXT INDEX resource_name_search IF NOT EXISTS FOR (r:Resource) ON EACH [r.name]",
-                    "CREATE FULLTEXT INDEX user_email_search IF NOT EXISTS FOR (u:User) ON EACH [u.email]",
+                    # Core asset indexing
+                    "CREATE INDEX asset_type_idx IF NOT EXISTS FOR (a:Asset) ON a.type",
+                    "CREATE INDEX asset_platform_idx IF NOT EXISTS FOR (a:Asset) ON a.platform",
+                    "CREATE INDEX asset_lastupdate_idx IF NOT EXISTS FOR (a:Asset) ON a.lastupdated",
                     
-                    # Property indexes for common queries
-                    "CREATE INDEX asset_type_lookup IF NOT EXISTS FOR (a:Asset) ON (a.type)",
-                    "CREATE INDEX asset_platform_lookup IF NOT EXISTS FOR (a:Asset) ON (a.platform)",
-                    "CREATE INDEX asset_env_lookup IF NOT EXISTS FOR (a:Asset) ON (a.environment)",
-                    "CREATE INDEX asset_updated_lookup IF NOT EXISTS FOR (a:Asset) ON (a.lastupdated)",
+                    # Identity management
+                    "CREATE INDEX user_email_idx IF NOT EXISTS FOR (u:User) ON u.email",
+                    "CREATE INDEX group_name_idx IF NOT EXISTS FOR (g:Group) ON g.name",
                     
-                    # Vector embedding index
-                    "CREATE INDEX embedding_lookup IF NOT EXISTS FOR (n:Asset) ON (n.embedding)"
+                    # Cloud resource indexing
+                    "CREATE INDEX gcp_project_idx IF NOT EXISTS FOR (p:GCPProject) ON p.project_id",
+                    "CREATE INDEX service_account_idx IF NOT EXISTS FOR (sa:ServiceAccount) ON sa.email",
+                    
+                    # Relationship indexing
+                    "CREATE INDEX rel_type_idx IF NOT EXISTS FOR ()-[r]-() ON type(r)",
+                    "CREATE INDEX rel_lastupdate_idx IF NOT EXISTS FOR ()-[r]-() ON r.lastupdated"
                 ]
                 
                 for index in indexes:
