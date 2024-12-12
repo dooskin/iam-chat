@@ -22,7 +22,6 @@ dependencies = [
     "google-api-python-client",
     "neo4j",
     "google-cloud-asset",
-    "sift-stack-py>=0.2.2",
     "google-cloud-resource-manager",
     "google-cloud-iam",
     "pypdf2>=3.0.1",
@@ -30,4 +29,6 @@ dependencies = [
     "numpy>=2.0.2",
     "scikit-learn>=1.6.0",
     "neo4j-driver>=5.27.0",
+    "py2neo",
+    "graphdatascience",
 ]

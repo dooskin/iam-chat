@@ -20,40 +20,106 @@ class GraphSchema:
             raise ValueError("Missing OpenAI API key")
         self.openai = OpenAI(api_key=openai_api_key)
         
-        # Set default local connection if not provided
+        # Set connection parameters from environment variables
         self.uri = os.environ.get('NEO4J_URI')
         self.user = os.environ.get('NEO4J_USER')
         self.password = os.environ.get('NEO4J_PASSWORD')
         
-        # Set default values if environment variables are not set
-        if not self.uri:
-            self.uri = 'bolt://localhost:7688'  # Using custom port from docker-compose
-        if not self.user:
-            self.user = 'neo4j'
-        if not self.password:
-            self.password = 'accessbot'
+        if not all([self.uri, self.user, self.password]):
+            raise ValueError("Missing required Neo4j environment variables. Please ensure NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD are set.")
+        
+        # Log connection attempt (without credentials)
+        logger.info(f"Attempting to connect to Neo4j at {self.uri}")
+        
+        try:
+            # Configure connection settings based on URI scheme
+            encrypted = True if any(scheme in self.uri for scheme in ['neo4j+s://', 'bolt+s://', 'neo4j+ssc://', 'bolt+ssc://']) else False
+            trust = "TRUST_SYSTEM_CA_SIGNED_CERTIFICATES" if encrypted else "TRUST_ALL_CERTIFICATES"
             
-        # Log Neo4j connection parameters (without sensitive data)
-        logger.info(f"Initializing Neo4j connection with URI: {self.uri}")
-        logger.info("Neo4j credentials configured successfully")
+            # Initialize Neo4j driver with retry mechanism
+            retry_count = 0
+            max_retries = 3
+            last_error = None
+            
+            while retry_count < max_retries:
+                try:
+                    self.driver = GraphDatabase.driver(
+                        self.uri,
+                        auth=(self.user, self.password),
+                        max_connection_lifetime=3600,
+                        max_connection_pool_size=50,
+                        connection_acquisition_timeout=60,
+                        connection_timeout=30,
+                        encrypted=encrypted,
+                        trust=trust
+                    )
+                    
+                    # Test connection
+                    self.driver.verify_connectivity()
+                    logger.info("Successfully connected to Neo4j database")
+                    break
+                    
+                except Exception as e:
+                    last_error = e
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        wait_time = 2 ** retry_count
+                        logger.warning(f"Connection attempt {retry_count} failed. Retrying in {wait_time} seconds...")
+                        import time
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f"Failed to connect after {max_retries} attempts")
+                        raise ValueError(f"Unable to establish Neo4j connection: {str(last_error)}")
+                        
+        except Exception as e:
+            logger.error(f"Failed to initialize Neo4j connection: {str(e)}")
+            raise
             
         # Initialize driver with proper error handling
         try:
             from neo4j.exceptions import ServiceUnavailable, AuthError
             
-            logger.info(f"Attempting to connect to Neo4j at {self.uri}")
+            # Configure connection settings based on URI scheme
+            encrypted = any(scheme in str(self.uri) for scheme in ['neo4j+s://', 'bolt+s://', 'neo4j+ssc://', 'bolt+ssc://'])
+            trust = "TRUST_SYSTEM_CA_SIGNED_CERTIFICATES" if encrypted else "TRUST_ALL_CERTIFICATES"
             
-            # Initialize Neo4j driver with enhanced configuration
-            logger.info("Creating Neo4j driver with configured parameters...")
-            self.driver = GraphDatabase.driver(
-                self.uri,
-                auth=(self.user, self.password),
-                max_connection_lifetime=3600,  # 1 hour
-                max_connection_pool_size=50,
-                connection_acquisition_timeout=60,
-                connection_timeout=30,
-                encrypted=True if 'neo4j+s://' in self.uri else False
-            )
+            # Initialize Neo4j driver with enhanced configuration and retry mechanism
+            retry_count = 0
+            max_retries = 3
+            last_error = None
+            
+            while retry_count < max_retries:
+                try:
+                    self.driver = GraphDatabase.driver(
+                        self.uri,
+                        auth=(self.user, self.password),
+                        max_connection_lifetime=3600,  # 1 hour
+                        max_connection_pool_size=50,
+                        connection_acquisition_timeout=60,
+                        connection_timeout=30,
+                        encrypted=encrypted,
+                        trust=trust
+                    )
+                    
+                    # Test connection
+                    self.driver.verify_connectivity()
+                    logger.info("Successfully connected to Neo4j database")
+                    break
+                    
+                except (ServiceUnavailable, AuthError) as e:
+                    last_error = e
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        wait_time = 2 ** retry_count
+                        logger.warning(f"Connection attempt {retry_count} failed: {str(e)}. Retrying in {wait_time} seconds...")
+                        import time
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f"Failed to connect after {max_retries} attempts")
+                        if isinstance(e, AuthError):
+                            raise ValueError("Neo4j authentication failed - please check credentials") from e
+                        else:
+                            raise ValueError(f"Unable to establish Neo4j connection: {str(e)}") from e
             
             # Test connection with retry logic
             retry_count = 0
