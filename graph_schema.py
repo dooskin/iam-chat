@@ -21,10 +21,18 @@ class GraphSchema:
         self.openai = OpenAI(api_key=openai_api_key)
         
         # Set default local connection if not provided
-        self.uri = os.environ.get('NEO4J_URI', 'bolt://localhost:7688')  # Using custom port from docker-compose
-        self.user = os.environ.get('NEO4J_USER', 'neo4j')
-        self.password = os.environ.get('NEO4J_PASSWORD', 'accessbot')  # Default password from docker-compose
+        self.uri = os.environ.get('NEO4J_URI')
+        self.user = os.environ.get('NEO4J_USER')
+        self.password = os.environ.get('NEO4J_PASSWORD')
         
+        # Set default values if environment variables are not set
+        if not self.uri:
+            self.uri = 'bolt://localhost:7688'  # Using custom port from docker-compose
+        if not self.user:
+            self.user = 'neo4j'
+        if not self.password:
+            self.password = 'accessbot'
+            
         # Log Neo4j connection parameters (without sensitive data)
         logger.info(f"Initializing Neo4j connection with URI: {self.uri}")
         logger.info("Neo4j credentials configured successfully")
@@ -33,17 +41,9 @@ class GraphSchema:
         try:
             from neo4j.exceptions import ServiceUnavailable, AuthError
             
-            # Set default local connection if not provided
-            if not self.uri:
-                self.uri = "bolt://localhost:7688"  # Using custom port from docker-compose
-            if not self.user:
-                self.user = "neo4j"
-            if not self.password:
-                self.password = "accessbot"  # Default password from docker-compose
-            
             logger.info(f"Attempting to connect to Neo4j at {self.uri}")
             
-            # Initialize Neo4j driver with local development configuration
+            # Initialize Neo4j driver with enhanced configuration
             logger.info("Creating Neo4j driver with configured parameters...")
             self.driver = GraphDatabase.driver(
                 self.uri,
@@ -51,7 +51,8 @@ class GraphSchema:
                 max_connection_lifetime=3600,  # 1 hour
                 max_connection_pool_size=50,
                 connection_acquisition_timeout=60,
-                connection_timeout=30
+                connection_timeout=30,
+                encrypted=True if 'neo4j+s://' in self.uri else False
             )
             
             # Test connection with retry logic
@@ -89,26 +90,42 @@ class GraphSchema:
             with self.driver.session() as session:
                 # Base Cartography node constraints using Neo4j 5.x syntax
                 constraints = [
-                    # Core asset management
+                    # Core asset management (Cartography base)
                     "CREATE CONSTRAINT IF NOT EXISTS FOR (a:Asset) REQUIRE a.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (a:Asset) REQUIRE a.asset_id IS UNIQUE",
                     
                     # Identity and access management
                     "CREATE CONSTRAINT IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
                     "CREATE CONSTRAINT IF NOT EXISTS FOR (g:Group) REQUIRE g.id IS UNIQUE",
                     "CREATE CONSTRAINT IF NOT EXISTS FOR (r:Role) REQUIRE r.id IS UNIQUE",
                     
-                    # Cloud resources
+                    # Cloud resources (GCP focus)
                     "CREATE CONSTRAINT IF NOT EXISTS FOR (p:GCPProject) REQUIRE p.id IS UNIQUE",
                     "CREATE CONSTRAINT IF NOT EXISTS FOR (sa:ServiceAccount) REQUIRE sa.id IS UNIQUE",
                     "CREATE CONSTRAINT IF NOT EXISTS FOR (r:Resource) REQUIRE r.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (i:GCPInstance) REQUIRE i.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (b:GCPBucket) REQUIRE b.id IS UNIQUE",
                     
-                    # HR system integration
+                    # HR system integration (Workday)
                     "CREATE CONSTRAINT IF NOT EXISTS FOR (e:Employee) REQUIRE e.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (e:Employee) REQUIRE e.employee_id IS UNIQUE",
                     "CREATE CONSTRAINT IF NOT EXISTS FOR (d:Department) REQUIRE d.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (t:Team) REQUIRE t.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (p:Position) REQUIRE p.id IS UNIQUE",
+                    
+                    # Organizational hierarchy
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (l:Location) REQUIRE l.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (o:Organization) REQUIRE o.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (bu:BusinessUnit) REQUIRE bu.id IS UNIQUE",
                     
                     # SaaS integration
                     "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Contact) REQUIRE c.id IS UNIQUE",
-                    "CREATE CONSTRAINT IF NOT EXISTS FOR (w:WorkdayEmployee) REQUIRE w.id IS UNIQUE"
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (w:WorkdayEmployee) REQUIRE w.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (a:Application) REQUIRE a.id IS UNIQUE",
+                    
+                    # Security and compliance
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (p:Policy) REQUIRE p.id IS UNIQUE",
+                    "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Compliance) REQUIRE c.id IS UNIQUE"
                 ]
                 
                 for constraint in constraints:
@@ -120,22 +137,47 @@ class GraphSchema:
                 
                 # Basic indexes for Cartography compatibility
                 indexes = [
-                    # Core asset indexing
+                    # Core asset indexing (Cartography compatible)
                     "CREATE INDEX asset_type_idx IF NOT EXISTS FOR (a:Asset) ON a.type",
                     "CREATE INDEX asset_platform_idx IF NOT EXISTS FOR (a:Asset) ON a.platform",
                     "CREATE INDEX asset_lastupdate_idx IF NOT EXISTS FOR (a:Asset) ON a.lastupdated",
+                    "CREATE INDEX asset_environment_idx IF NOT EXISTS FOR (a:Asset) ON a.environment",
                     
-                    # Identity management
+                    # Identity management and authentication
                     "CREATE INDEX user_email_idx IF NOT EXISTS FOR (u:User) ON u.email",
+                    "CREATE INDEX user_name_idx IF NOT EXISTS FOR (u:User) ON u.name",
                     "CREATE INDEX group_name_idx IF NOT EXISTS FOR (g:Group) ON g.name",
                     
-                    # Cloud resource indexing
+                    # Cloud resource indexing (GCP focused)
                     "CREATE INDEX gcp_project_idx IF NOT EXISTS FOR (p:GCPProject) ON p.project_id",
                     "CREATE INDEX service_account_idx IF NOT EXISTS FOR (sa:ServiceAccount) ON sa.email",
+                    "CREATE INDEX gcp_instance_name_idx IF NOT EXISTS FOR (i:GCPInstance) ON i.name",
+                    "CREATE INDEX gcp_bucket_name_idx IF NOT EXISTS FOR (b:GCPBucket) ON b.name",
+                    
+                    # HR data indexing (Workday integration)
+                    "CREATE INDEX employee_email_idx IF NOT EXISTS FOR (e:Employee) ON e.email",
+                    "CREATE INDEX employee_department_idx IF NOT EXISTS FOR (e:Employee) ON e.department",
+                    "CREATE INDEX department_name_idx IF NOT EXISTS FOR (d:Department) ON d.name",
+                    "CREATE INDEX team_name_idx IF NOT EXISTS FOR (t:Team) ON t.name",
+                    "CREATE INDEX position_title_idx IF NOT EXISTS FOR (p:Position) ON p.title",
+                    
+                    # Organization structure
+                    "CREATE INDEX location_name_idx IF NOT EXISTS FOR (l:Location) ON l.name",
+                    "CREATE INDEX org_name_idx IF NOT EXISTS FOR (o:Organization) ON o.name",
+                    "CREATE INDEX bu_name_idx IF NOT EXISTS FOR (bu:BusinessUnit) ON bu.name",
+                    
+                    # Vector search and embeddings
+                    "CREATE INDEX embedding_idx IF NOT EXISTS FOR (n) ON n.embedding",
+                    "CREATE INDEX vector_similarity_idx IF NOT EXISTS FOR (n) ON n.text_content",
+                    
+                    # Temporal indexing
+                    "CREATE INDEX created_at_idx IF NOT EXISTS FOR (n) ON n.created_at",
+                    "CREATE INDEX updated_at_idx IF NOT EXISTS FOR (n) ON n.updated_at",
                     
                     # Relationship indexing
                     "CREATE INDEX rel_type_idx IF NOT EXISTS FOR ()-[r]-() ON type(r)",
-                    "CREATE INDEX rel_lastupdate_idx IF NOT EXISTS FOR ()-[r]-() ON r.lastupdated"
+                    "CREATE INDEX rel_lastupdate_idx IF NOT EXISTS FOR ()-[r]-() ON r.lastupdated",
+                    "CREATE INDEX rel_weight_idx IF NOT EXISTS FOR ()-[r]-() ON r.weight"
                 ]
                 
                 for index in indexes:
@@ -431,3 +473,78 @@ class GraphSchema:
         except Exception as e:
             logger.error(f"Error creating/updating user: {str(e)}")
             raise ValueError(f"Failed to create/update user: {str(e)}") from e
+    def create_or_update_asset(self, asset_data: Dict[str, Any]) -> None:
+        """
+        Create or update an asset node in the graph database with Cartography compatibility.
+        
+        Args:
+            asset_data: Dictionary containing asset information with required fields:
+                - id: Unique identifier
+                - name: Display name
+                - type: Asset type (e.g., 'GCPProject', 'ServiceAccount')
+                - platform: Cloud platform or system (e.g., 'GCP', 'AWS')
+                - metadata: Additional asset metadata
+                - relationships: List of relationships to other nodes
+        """
+        try:
+            required_fields = ['id', 'type', 'platform']
+            if not all(field in asset_data for field in required_fields):
+                raise ValueError(f"Missing required asset fields: {required_fields}")
+            
+            with self.driver.session() as session:
+                # Create or update asset node with Cartography properties
+                query = """
+                MERGE (a:Asset {id: $id})
+                SET a += $properties,
+                    a.lastupdated = timestamp(),
+                    a:$asset_type
+                WITH a
+                
+                // Process relationships
+                UNWIND $relationships as rel
+                MATCH (target:Asset {id: rel.target_id})
+                MERGE (a)-[r:$rel_type]->(target)
+                SET r.lastupdated = timestamp()
+                RETURN a
+                """
+                
+                # Prepare node properties
+                properties = {
+                    'name': asset_data.get('name', ''),
+                    'type': asset_data['type'],
+                    'platform': asset_data['platform'],
+                    'environment': asset_data.get('environment', 'unknown'),
+                    'metadata': asset_data.get('metadata', {}),
+                    'tags': asset_data.get('tags', [])
+                }
+                
+                # Process each relationship
+                for relationship in asset_data.get('relationships', []):
+                    result = session.run(
+                        query,
+                        id=asset_data['id'],
+                        properties=properties,
+                        asset_type=asset_data['type'],
+                        relationships=asset_data.get('relationships', []),
+                        rel_type=relationship['type']
+                    )
+                    
+                    asset_node = result.single()
+                    if not asset_node:
+                        raise ValueError(f"Failed to create/update asset with ID: {asset_data['id']}")
+                
+                # Generate and store embedding if text content is available
+                if 'name' in asset_data or 'metadata' in asset_data:
+                    text_content = f"{asset_data.get('name', '')} - {asset_data['type']} on {asset_data['platform']}"
+                    self.create_node_embedding(
+                        asset_data['id'],
+                        asset_data['type'],
+                        text_content,
+                        asset_data.get('metadata', {})
+                    )
+                    
+                logger.info(f"Successfully created/updated asset: {asset_data['id']} of type {asset_data['type']}")
+                
+        except Exception as e:
+            logger.error(f"Error creating/updating asset: {str(e)}")
+            raise ValueError(f"Failed to create/update asset: {str(e)}") from e

@@ -8,14 +8,28 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def test_neo4j_connection():
-    """Test Neo4j connection, schema initialization, and validation."""
+    """Test Neo4j connection, schema initialization, and validation with Cartography compatibility."""
     try:
-        # Initialize GraphSchema
-        logger.info("Initializing Graph Schema...")
+        # Initialize GraphSchema with environment variables
+        logger.info("Initializing Graph Schema for Cartography integration...")
+        logger.info("Using Neo4j configuration from environment variables for secure connection...")
+        
+        # Verify environment variables
+        neo4j_uri = os.environ.get('NEO4J_URI')
+        neo4j_user = os.environ.get('NEO4J_USER')
+        neo4j_password = os.environ.get('NEO4J_PASSWORD')
+        
+        if not all([neo4j_uri, neo4j_user, neo4j_password]):
+            logger.error("Missing required Neo4j environment variables")
+            logger.error(f"NEO4J_URI present: {bool(neo4j_uri)}")
+            logger.error(f"NEO4J_USER present: {bool(neo4j_user)}")
+            logger.error(f"NEO4J_PASSWORD present: {bool(neo4j_password)}")
+            return False
+            
         graph = GraphSchema()
         
         # Test connection with retry logic
-        logger.info("Testing Neo4j connection...")
+        logger.info(f"Testing Neo4j connection to {neo4j_uri}...")
         retry_count = 0
         max_retries = 3
         
@@ -28,9 +42,10 @@ def test_neo4j_connection():
             except Exception as e:
                 retry_count += 1
                 if retry_count == max_retries:
-                    logger.error("Failed to establish Neo4j connection after multiple attempts")
+                    logger.error(f"Failed to establish Neo4j connection after {max_retries} attempts")
+                    logger.error(f"Last error: {str(e)}")
                     raise
-                logger.warning(f"Connection attempt {retry_count} failed: {str(e)}. Retrying...")
+                logger.warning(f"Connection attempt {retry_count} failed: {str(e)}. Retrying in {2 ** retry_count} seconds...")
                 import time
                 time.sleep(2 ** retry_count)  # Exponential backoff
         
