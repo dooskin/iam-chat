@@ -70,11 +70,9 @@ class GraphSchema:
                     message_serializer=serializer.GraphSONSerializersV2d0(),
                     transport_factory=lambda: AiohttpTransport(
                         call_from_event_loop=True,
-                        read_timeout=30,
-                        write_timeout=30,
-                        pool_size=1,
-                        ssl=ssl_context,
-                        max_content_length=65536
+                        read_timeout=15,
+                        write_timeout=15,
+                        ssl=ssl_context
                     )
                 )
                 

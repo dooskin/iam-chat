@@ -39,23 +39,35 @@ def verify_endpoint_format(endpoint: str) -> bool:
 def get_neptune_version(endpoint: str) -> str:
     """Get Neptune engine version using boto3."""
     try:
-        region = os.getenv('AWS_REGION', 'us-east-1')
+        region = os.getenv('AWS_REGION', 'us-east-2')
+        logger.info(f"Initializing Neptune client in region: {region}")
+        
         neptune = boto3.client('neptune', 
                              region_name=region,
                              config=Config(retries={'max_attempts': 3}))
         
         # Extract cluster identifier from endpoint
         cluster_id = endpoint.split('.')[0]
+        logger.info(f"Querying cluster information for: {cluster_id}")
         
         response = neptune.describe_db_clusters(
             Filters=[{'Name': 'db-cluster-id', 'Values': [cluster_id]}]
         )
         
         if response['DBClusters']:
-            return response['DBClusters'][0]['EngineVersion']
+            version = response['DBClusters'][0]['EngineVersion']
+            logger.info(f"Found Neptune cluster version: {version}")
+            return version
+            
+        logger.warning("No Neptune clusters found matching the provided identifier")
+        return "Unknown"
+        
+    except boto3.exceptions.Boto3Error as e:
+        logger.error(f"AWS API error: {str(e)}")
         return "Unknown"
     except Exception as e:
-        logger.warning(f"Could not retrieve Neptune version: {str(e)}")
+        logger.error(f"Unexpected error retrieving Neptune version: {str(e)}")
+        logger.error("Stack trace:", exc_info=True)
         return "Unknown"
 
 def test_neptune_connection():
@@ -110,20 +122,34 @@ def test_neptune_connection():
                 ssl_context.verify_mode = ssl.CERT_REQUIRED
 
                 # Initialize connection with retry logic
-                connection = DriverRemoteConnection(
-                    f'wss://{endpoint}:8182/gremlin',
-                    'g',
-                    message_serializer=serializer.GraphSONSerializersV2d0(),
-                    transport_factory=lambda: AiohttpTransport(
-                        call_from_event_loop=True,
-                        read_timeout=30,
-                        write_timeout=30,
-                        pool_size=1,
-                        ssl=ssl_context,
-                        max_content_length=65536
+                logger.info(f"Initializing connection to Neptune at wss://{endpoint}:8182/gremlin")
+                try:
+                    logger.info("Attempting to establish DriverRemoteConnection...")
+                    connection = DriverRemoteConnection(
+                        f'wss://{endpoint}:8182/gremlin',
+                        'g',
+                        message_serializer=serializer.GraphSONSerializersV2d0(),
+                        transport_factory=lambda: AiohttpTransport(
+                            call_from_event_loop=True,
+                            read_timeout=30,  # Increased timeout for VPC connection
+                            write_timeout=30,
+                            ssl=ssl_context
+                        )
                     )
-                )
-                logger.info("Successfully created DriverRemoteConnection")
+                    logger.info("DriverRemoteConnection established successfully")
+                    logger.info("Successfully created DriverRemoteConnection")
+                except ssl.SSLError as ssl_err:
+                    logger.error(f"SSL Configuration Error: {str(ssl_err)}")
+                    logger.error("Please verify SSL certificates and Neptune endpoint SSL configuration")
+                    raise
+                except aiohttp.ClientError as client_err:
+                    logger.error(f"Network Error: {str(client_err)}")
+                    logger.error("Please verify network connectivity and Neptune endpoint accessibility")
+                    raise
+                except Exception as e:
+                    logger.error(f"Unexpected error during connection initialization: {str(e)}")
+                    logger.error("Stack trace:", exc_info=True)
+                    raise
                 logger.info("Creating GraphTraversalSource.")
                 
                 # Test connection by creating traversal source
@@ -132,8 +158,13 @@ def test_neptune_connection():
                 
                 # Verify connection with a simple query
                 logger.info("Testing connection with a simple vertex query...")
-                count = g.V().limit(1).count().next()
-                logger.info(f"✓ Query executed successfully (found {count} vertices)")
+                # Set a timeout for the query execution
+                try:
+                    count = g.V().limit(1).count().toList()[0]
+                    logger.info(f"✓ Query executed successfully (found {count} vertices)")
+                except Exception as query_error:
+                    logger.error(f"Query execution failed: {str(query_error)}")
+                    raise
                 
                 logger.info("✓ Successfully established connection to Neptune")
                 break
