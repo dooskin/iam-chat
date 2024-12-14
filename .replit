@@ -82,7 +82,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4j} neo4j console --config-dir=. --config=neo4j.conf"
+args = "chmod -R 777 data logs plugins import && NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4j} NEO4J_CONF=$(pwd)/neo4j.conf neo4j console"
 waitForPort = 7687
 
 [deployment]
