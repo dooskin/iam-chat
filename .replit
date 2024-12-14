@@ -13,34 +13,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Flask Server"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "Test Neo4j Integration"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Test Cartography Integration"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Neo4j Server"
-
-[[workflows.workflow]]
-name = "Flask Server"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python app.py"
-waitForPort = 5000
 
 [[workflows.workflow]]
 name = "Test Neo4j Integration"
@@ -54,42 +27,10 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python test_cartography_sync.py"
-
-[[workflows.workflow]]
-name = "Test Cartography Integration"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python test_cartography_sync.py"
-
-[[workflows.workflow]]
-name = "Neo4j Server"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = """
-
-    NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4j}     NEO4J_dbms_security_procedures_unrestricted=apoc.*     NEO4J_dbms_security_procedures_allowlist=apoc.coll.*,apoc.load.*,apoc.meta.*,apoc.periodic.*,apoc.text.*,apoc.path.*,apoc.convert.*,apoc.graph.*,apoc.cypher.*,apoc.algo.*,apoc.uuid.*,apoc.create.*,apoc.merge.*,apoc.refactor.*,apoc.schema.*,apoc.search.*,apoc.spatial.*,apoc.static.*,apoc.trigger.*,gds.*     NEO4J_dbms_memory_pagecache_size=64m     NEO4J_dbms_memory_heap_initial_size=64m     NEO4J_dbms_memory_heap_max_size=128m     NEO4J_server_directories_plugins=plugins     NEO4J_apoc_import_file_enabled=true     NEO4J_apoc_export_file_enabled=true     NEO4J_dbms_connector_bolt_listen__address=0.0.0.0:7687     NEO4J_dbms_connector_http_listen__address=0.0.0.0:7474     neo4j console
-    """
-waitForPort = 7687
+args = "python test_graph_schema.py"
 
 [deployment]
-run = ["sh", "-c", "python app.py"]
+run = ["sh", "-c", "python test_graph_schema.py"]
 
 [[ports]]
 localPort = 5000
